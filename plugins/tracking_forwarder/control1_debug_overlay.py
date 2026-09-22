@@ -5,45 +5,19 @@ import sys
 from talon import Context, Module, actions, app, tracking_system, ui
 
 _RELOAD_STATE_KEY = "_jm_talon_lite_control1_overlay_state"
-_legacy_enabled = bool(globals().get("_overlay_enabled", False))
-_legacy_callback = (
-    globals().get("_on_gaze") if globals().get("_gaze_registered", False) else None
-)
-_legacy_entries = tuple(globals().get("_canvas_entries", ()))
-_previous_enabled = _legacy_enabled
-_previous_callbacks = {_legacy_callback} - {None}
-_previous_entries = list(_legacy_entries)
-_previous_state = getattr(sys, _RELOAD_STATE_KEY, None)
-if _previous_state is not None:
-    if len(_previous_state) == 3:
-        _state_enabled, _state_callbacks, _state_entries = _previous_state
-        _previous_enabled = bool(_state_enabled)
-        _previous_callbacks.update(_state_callbacks)
-    else:
-        _state_callback, _state_entries = _previous_state
-        _previous_enabled = _previous_enabled or bool(_state_entries)
-        if _state_callback is not None:
-            _previous_callbacks.add(_state_callback)
-    _known_entries = {(id(canvas), id(draw)) for canvas, draw in _previous_entries}
-    for _state_entry in _state_entries:
-        _state_identity = (id(_state_entry[0]), id(_state_entry[1]))
-        if _state_identity not in _known_entries:
-            _previous_entries.append(_state_entry)
-            _known_entries.add(_state_identity)
+_previous_enabled, _previous_callbacks, _previous_entries = getattr(
+    sys, _RELOAD_STATE_KEY, None
+) or (False, (), ())
 
 if _previous_callbacks or _previous_entries:
     _previous_failures = []
     _previous_failed_callbacks = []
     _previous_remaining = []
     for _previous_callback in _previous_callbacks:
-        _previous_callback_failed = False
-        for _ in range(16):
-            try:
-                tracking_system.unregister("gaze", _previous_callback)
-            except Exception as exc:
-                _previous_callback_failed = True
-                _previous_failures.append(("gaze callback", exc))
-        if _previous_callback_failed:
+        try:
+            tracking_system.unregister("gaze", _previous_callback)
+        except Exception as exc:
+            _previous_failures.append(("gaze callback", exc))
             _previous_failed_callbacks.append(_previous_callback)
     for _previous_canvas, _previous_draw in _previous_entries:
         try:

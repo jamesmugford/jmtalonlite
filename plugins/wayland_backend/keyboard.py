@@ -14,13 +14,11 @@ from .key_spec import (
     KeyPress,
     KeyStroke,
     ResolvedStroke,
-    modifier_chord,
     parse_key_spec,
     plan_key_events,
 )
 from .seats import SeatCapability, SeatRegistry
 from .xkb import (
-    KEY_MAX,
     KEYMAP_FORMAT_XKB_V1,
     XkbKeymap,
     create_keymap_fd,
@@ -457,17 +455,3 @@ class VirtualKeyboard:
                 for keycode in reversed(tuple(self._held_keys))
             )
         )
-
-
-__all__ = [
-    "KEYMAP_FORMAT_XKB_V1",
-    "KEY_MAX",
-    "KeyStroke",
-    "VirtualKeyboard",
-    "XkbKeymap",
-    "create_keymap_fd",
-    "modifier_chord",
-    "parse_key_spec",
-    "read_keymap_fd",
-    "validate_keycode",
-]

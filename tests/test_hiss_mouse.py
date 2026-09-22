@@ -79,6 +79,7 @@ def load_hiss_module(*, clear_state, autostart=False):
         delattr(sys, key)
     with patch.dict(sys.modules, {"talon": talon}):
         spec.loader.exec_module(module)
+    talon.actions.user.hiss_mouse_enable = module.Actions.hiss_mouse_enable
     return module, talon, old_state
 
 
@@ -132,6 +133,31 @@ class HissMouseTests(unittest.TestCase):
         reloaded._on_ready()
 
         self.assertFalse(reloaded.Actions.hiss_mouse_enabled())
+
+    def test_reload_before_ready_still_applies_autostart(self):
+        first, _talon, _old_state = load_hiss_module(clear_state=True, autostart=True)
+        self.assertFalse(hasattr(sys, first._STATE_KEY))
+        reloaded, _talon, _old_state = load_hiss_module(
+            clear_state=False, autostart=True
+        )
+        reloaded._on_ready()
+        self.assertTrue(reloaded.Actions.hiss_mouse_enabled())
+
+    def test_explicit_disable_before_ready_is_preserved(self):
+        loaded, _talon, _old_state = load_hiss_module(clear_state=True, autostart=True)
+        loaded.Actions.hiss_mouse_disable()
+        loaded._on_ready()
+        self.assertFalse(loaded.Actions.hiss_mouse_enabled())
+
+    def test_disabled_startup_does_not_toggle_control_mouse(self):
+        loaded, talon, _old_state = load_hiss_module(clear_state=True, autostart=False)
+        talon.actions.control1_enabled = True
+        loaded._on_ready()
+        talon.settings.autostart = True
+        loaded._on_ready()
+        self.assertFalse(loaded.Actions.hiss_mouse_enabled())
+        self.assertTrue(talon.actions.control1_enabled)
+        self.assertEqual(talon.actions.control1_toggles, [])
 
 
 if __name__ == "__main__":

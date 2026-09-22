@@ -100,7 +100,7 @@ state may add lines; fewer lines alone is not the measure of success.
   - **Done when:** old cleanup cannot release a newer hold, preheld modifiers
     remain protected, and repeated cleanup does nothing.
 
-- [ ] **07 — Remove redundant command and action routes**
+- [x] **07 — Remove redundant command and action routes**
   - Route wheel commands through standard directional actions and the main
     `mouse_scroll` override. Remove duplicate directional forwarding and unused
     one-axis helpers.
@@ -113,7 +113,7 @@ state may add lines; fewer lines alone is not the measure of success.
     intact. Normal dispatch intentionally honors app overrides and removes
     incidental retries through redundant wrappers.
 
-- [ ] **08 — Simplify historical reload machinery**
+- [x] **08 — Simplify historical reload machinery**
   - Remove retired runtime migrations, old-global recovery, obsolete retained
     formats, and migration-only tests.
   - Replace historical duplicate-draining loops with exact callback ownership
@@ -336,7 +336,83 @@ state may add lines; fewer lines alone is not the measure of success.
     were injected and no restart or enabled-state changes were requested.
   - Both Ruff commands remain unavailable because Ruff is not installed.
   - `git diff --check` passed.
-- Next task: **07 — Remove redundant command and action routes**.
+- Committed as `2cf3d88`.
+
+### 07 — Complete
+
+- Starting revision: `2cf3d88`.
+- Removed four custom directional scroll actions, four duplicate directional
+  overrides, their declarations, and the two one-axis forwarding helpers. The
+  sixteen wheel command forms now call the standard directional actions, which
+  reach the shared `mouse_scroll` boundary through Community's defaults or a
+  configuration's equivalent implementation.
+- Replaced the three calls to the trivial key-chord action with direct `key(...)`
+  calls and removed that wrapper. The spoken modifier vocabulary is unchanged.
+- Removed the unused modifier-up plan: `modifier_chord()` now returns only down
+  strokes, while release continues to use the actual press identities from
+  piece 06. Removed the keyboard module's unused export list and imports used
+  only for that list.
+- Clarified the command-layer dependencies and normal-dispatch behavior in the
+  README and corrected the modifier grammar's capture-dependency comment.
+- Net reduction: 139 lines of production Python, without adding a replacement
+  forwarding abstraction.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - Two shared-boundary tests passed before and after deletion: normal wheel
+    units in all four directions and accumulation of tiny wheel amounts.
+  - All 59 focused mouse, key-spec, keyboard, and facade tests passed.
+  - All 189 tests passed with `-m unittest discover -s tests`.
+  - Talon reloaded the Python and grammar files without import or parse errors.
+    The existing owner-thread startup warning was logged during backend reload.
+  - A read-only live registry check confirmed standard directional defaults are
+    available, local directional overrides and removed aliases are absent, and
+    the modifier helper has its new return shape. Native keyboard and pointer
+    output were available with no backend error. No live input was injected.
+  - Ruff checks including `core` were attempted; Ruff remains unavailable.
+  - `git diff --check` passed and no production references to the removed
+    actions or one-axis helpers remain.
+- Changes remained uncommitted when piece 08 began.
+
+### 08 — Complete
+
+- Starting revision: `2cf3d88`, with completed piece 07 changes in the working tree.
+- With permission, recorded the current feature choices, stopped Talon before
+  production edits, and relaunched it after tests passed. The recorded choices
+  matched after restart: pointer forwarding, hiss mouse, and speech enabled;
+  gaze logging, overlay, Control Mouse, and face scrolling disabled. Settings and
+  both face-gesture repositories were left unchanged.
+- Removed retired runtime/scope/job migrations, old-global recovery, alternate
+  overlay state formats, historical menu-wrapper recovery, and the initial
+  modifier-token counter migration. Current bridge replacement, handle allocation,
+  fallback ownership, and the current retained state formats remain supported.
+- Replaced the sixteen-attempt gaze-unregister loops with exact callback
+  retirement and guarded registration. Successful retirement forgets the inactive
+  callback; failure retains its handle for retry. Retirement still occurs before
+  dependent imports, so a failed replacement import does not leave old resources
+  active after successful cleanup.
+- Startup now distinguishes unresolved intent from explicit enabled/disabled
+  choices. Pointer/logger readiness resolves defaults once and reconciles
+  ownership, including retrying failed starts/stops. Hiss startup records the
+  disabled default without turning off independently enabled Control Mouse.
+- Removed five migration-only tests and their legacy-global injection scaffolding.
+  Retained current reload and cleanup tests, and added coverage for startup
+  ordering, exact-once registration, explicit decisions before ready, cleanup
+  retries, failed imports, and retained overlay resources.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - New startup tests reproduced the old behavior before production changes.
+  - A final failure-path check caught and corrected a readiness-retry gap before
+    completion.
+  - All 196 tests passed with `-m unittest discover -s tests -q`.
+  - Cold startup loaded the updated modules successfully; the existing Community
+    deprecation and Wayland owner-thread warnings were reported.
+  - Live checks confirmed matching restart choices, available native keyboard and
+    pointer output, no backend error, and correct callback ownership after the
+    final tracking-script reload. No synthetic keys, clicks, or scrolling were
+    injected.
+  - Both Ruff checks remain unavailable because Ruff is not installed.
+  - `git diff --check` passed. Removed migration names and repeated unregister
+    loops have no remaining production references.
+- Pieces 07 and 08 remain uncommitted. Next task: **09 — Clarify the runtime's
+  responsibilities**.
 
 ## Deferred backlog
 

@@ -5,6 +5,12 @@ A lightweight shim that forwards Talon input to Wayland backends.
 This is a drop-in configuration that can be used alongside Talon Community or
 another custom configuration.
 
+The supplied command layer uses Community's mouse actions/settings and
+`user.unmodified_key` capture, or equivalents supplied by your configuration.
+Wheel commands follow standard Talon action dispatch, including app-specific
+overrides. Custom input code should call `actions.key()` and `actions.mouse_*()`
+to use the native forwarding layer.
+
 > **Native Wayland transition:** Talon Lite recently moved from Dotool to native
 > Wayland protocols. The previous implementation remains available on the
 > [`legacy/dotool`](https://github.com/jamesmugford/jmtalonlite/tree/legacy/dotool)

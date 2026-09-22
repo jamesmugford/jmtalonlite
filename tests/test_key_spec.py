@@ -32,15 +32,11 @@ class KeySpecTests(unittest.TestCase):
             ),
         )
 
-    def test_modifier_chord_returns_ordered_down_and_up_strokes(self):
-        down, up = modifier_chord("ctrl-shift")
+    def test_modifier_chord_returns_modifier_down_strokes(self):
+        down = modifier_chord("ctrl-shift")
         self.assertEqual(
             down,
             (KeyStroke(("ctrl", "shift"), None, KeyAction.DOWN, 1),),
-        )
-        self.assertEqual(
-            up,
-            (KeyStroke(("ctrl", "shift"), None, KeyAction.UP, 1),),
         )
         with self.assertRaises(ValueError):
             modifier_chord("ctrl-a")

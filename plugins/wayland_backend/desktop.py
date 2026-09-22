@@ -113,7 +113,7 @@ class WaylandDesktop:
         timeout: float = 1.0,
     ) -> tuple[KeyPress, ...]:
         """Press unheld modifiers and return their opaque press identities."""
-        down, _up = modifier_chord(modifiers)
+        down = modifier_chord(modifiers)
         return self._connection.execute(
             lambda: self._keyboard._emit_strokes(down),
             timeout,
@@ -234,7 +234,7 @@ class WaylandDesktop:
         timeout: float = 1.0,
     ) -> None:
         """Click while holding one modifier chord as one ordered transaction."""
-        down, _up = modifier_chord(modifiers)
+        down = modifier_chord(modifiers)
         code = linux_button_code(button)
 
         def operation() -> None:

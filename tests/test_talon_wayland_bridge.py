@@ -312,34 +312,6 @@ class TalonWaylandBridgeTests(unittest.TestCase):
         self.assertFalse(bridge._app_scope_update_pending)
         self.assertFalse(bridge._cleanup_pending)
 
-    def test_legacy_runtime_stop_precedes_final_job_cancellation(self):
-        runtime_key = self.module._LEGACY_RUNTIME_KEY
-        job_key = self.module._LEGACY_CONTEXT_JOB_KEY
-        scopes_key = self.module._LEGACY_SCOPE_ORIGINALS_KEY
-        final_job = types.SimpleNamespace(cancelled=False)
-
-        def original_app():
-            return {"legacy": "app"}
-
-        def original_win():
-            return {"legacy": "win"}
-
-        def stop():
-            setattr(sys, job_key, final_job)
-
-        setattr(sys, runtime_key, types.SimpleNamespace(stop=stop))
-        setattr(sys, scopes_key, (original_app, original_win))
-        try:
-            self.module._retire_legacy_runtime()
-        finally:
-            for key in (runtime_key, job_key, scopes_key):
-                if hasattr(sys, key):
-                    delattr(sys, key)
-
-        self.assertTrue(final_job.cancelled)
-        self.assertIs(self.talon.scope.scopes["app"].func, original_app)
-        self.assertIs(self.talon.scope.scopes["win"].func, original_win)
-
     def test_start_failure_rolls_back_desktop_and_callbacks(self):
         bridge = self.module._TalonWaylandBridge()
         with (

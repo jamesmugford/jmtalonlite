@@ -27,17 +27,12 @@ def _install_menu_hook() -> bool:
     if cb is None:
         return False
 
-    original = attrs.get("_control1_state_menu_original")
-    if original is None and attrs.get("_control1_state_menu_wrapper", False):
-        defaults = getattr(cb, "__defaults__", ())
-        original = defaults[0] if defaults else cb
-    elif original is None:
-        original = cb
+    original = attrs.get("_control1_state_menu_original", cb)
 
-    def wrapped(menu_item, orig_cb=original):
+    def wrapped(menu_item):
         """Run Talon's callback and publish a resulting state change."""
         before = actions.tracking.control1_enabled()
-        result = orig_cb(menu_item)
+        result = original(menu_item)
         after = actions.tracking.control1_enabled()
         if before == after:
             return result
@@ -45,7 +40,6 @@ def _install_menu_hook() -> bool:
         return result
 
     attrs["cb"] = wrapped
-    attrs["_control1_state_menu_wrapper"] = True
     attrs["_control1_state_menu_original"] = original
     return True
 

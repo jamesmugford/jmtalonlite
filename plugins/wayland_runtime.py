@@ -26,23 +26,12 @@ _BRIDGE_KEY = "_jm_talon_lite_wayland_bridge"
 _MODIFIER_TOKEN_IDS_KEY = "_jm_talon_lite_modifier_token_ids"
 _modifier_token_ids = getattr(sys, _MODIFIER_TOKEN_IDS_KEY, None)
 if _modifier_token_ids is None:
-    # Continue the preceding bridge's IDs on first adoption, then retain the
-    # allocator itself so an old handle cannot address a new hold after reload.
-    _previous_bridge = getattr(sys, _BRIDGE_KEY, None)
-    _modifier_token_ids = count(getattr(_previous_bridge, "_next_modifier_token", 1))
+    # Retain the allocator so old handles cannot name new holds after reload.
+    _modifier_token_ids = count(1)
     setattr(sys, _MODIFIER_TOKEN_IDS_KEY, _modifier_token_ids)
 
-_LEGACY_RUNTIME_KEY = "_jm_talon_lite_wayland_runtime"
-_LEGACY_CONTEXT_JOB_KEY = "_jm_talon_lite_wayland_context_job"
-_LEGACY_SCOPE_ORIGINALS_KEY = "_jm_talon_lite_wayland_scope_originals"
 _FALLBACK_KEYS_KEY = "_jm_talon_lite_fallback_keyboard_keys"
-_fallback_held_keys = set(
-    getattr(
-        sys,
-        _FALLBACK_KEYS_KEY,
-        globals().get("_fallback_held_keys", ()),
-    )
-)
+_fallback_held_keys = set(getattr(sys, _FALLBACK_KEYS_KEY, ()))
 _PROTOCOL_FEATURES = {
     "wl_output": "output-bound gaze forwarding",
     "zwp_virtual_keyboard_manager_v1": "keyboard forwarding",
@@ -616,69 +605,10 @@ def _on_quit() -> None:
     _bridge.stop()
 
 
-def _retire_legacy_runtime() -> None:
-    """Stop and remove state retained by the previous runtime architecture."""
-    failures = []
-
-    def attempt(label: str, operation: Callable[[], None]) -> bool:
-        """Run one migration cleanup while preserving later opportunities."""
-        try:
-            operation()
-        except Exception as exc:
-            failures.append((label, exc))
-            return False
-        return True
-
-    legacy_runtime = getattr(sys, _LEGACY_RUNTIME_KEY, None)
-    if legacy_runtime is not None:
-        if attempt("legacy runtime", legacy_runtime.stop):
-            delattr(sys, _LEGACY_RUNTIME_KEY)
-    # Stopping the old runtime can enqueue one final delayed context update.
-    legacy_job = getattr(sys, _LEGACY_CONTEXT_JOB_KEY, None)
-    if legacy_job is not None:
-        if attempt("legacy context job", lambda: cron.cancel(legacy_job)):
-            delattr(sys, _LEGACY_CONTEXT_JOB_KEY)
-    legacy_scopes = getattr(sys, _LEGACY_SCOPE_ORIGINALS_KEY, None)
-    if legacy_scopes is not None:
-        app_scope_decl = scope.scopes["app"]
-        win_scope_decl = scope.scopes["win"]
-
-        def restore_scopes() -> None:
-            """Restore both pre-Wayland providers and publish their values."""
-            app_scope_decl.func, win_scope_decl.func = legacy_scopes
-            scope_failures = []
-            for label, declaration in (
-                ("app scope", app_scope_decl),
-                ("window scope", win_scope_decl),
-            ):
-                try:
-                    declaration.update()
-                except Exception as exc:
-                    scope_failures.append((label, exc))
-            if scope_failures:
-                _label, error = scope_failures[0]
-                for label, secondary in scope_failures[1:]:
-                    error.add_note(
-                        f"{label} also failed: {type(secondary).__name__}: {secondary}"
-                    )
-                raise error.with_traceback(error.__traceback__)
-
-        if attempt("legacy scope providers", restore_scopes):
-            delattr(sys, _LEGACY_SCOPE_ORIGINALS_KEY)
-    if failures:
-        _label, error = failures[0]
-        for label, secondary in failures[1:]:
-            error.add_note(
-                f"{label} also failed: {type(secondary).__name__}: {secondary}"
-            )
-        raise error.with_traceback(error.__traceback__)
-
-
 _candidate_bridge = _TalonWaylandBridge()
 _previous_bridge = getattr(sys, _BRIDGE_KEY, None)
 if _previous_bridge is not None:
     _previous_bridge.stop()
-_retire_legacy_runtime()
 _bridge = _candidate_bridge
 setattr(sys, _BRIDGE_KEY, _bridge)
 

@@ -196,6 +196,39 @@ class MouseForwarderTests(unittest.TestCase):
         self.assertEqual(self.module._vertical_scroll_remainder, 0.0)
         self.assertEqual(self.module._horizontal_scroll_remainder, 0.0)
 
+    def test_standard_wheel_units_use_the_shared_scroll_boundary(self):
+        self.talon.settings._values = {
+            "user.mouse_wheel_down_amount": 120,
+            "user.mouse_wheel_horizontal_amount": 40,
+        }
+        for y, x, expected in (
+            (120, 0, (1, 0)),
+            (-120, 0, (-1, 0)),
+            (0, 40, (0, 1)),
+            (0, -40, (0, -1)),
+        ):
+            with self.subTest(y=y, x=x):
+                self.talon.actions.scroll_emissions.clear()
+                self.module.MainActions.mouse_scroll(y, x)
+                self.assertEqual(self.talon.actions.scroll_emissions, [expected])
+
+        self.assertEqual(self.talon.actions.continuous_scroll_attempts, [])
+
+    def test_tiny_standard_wheel_amounts_accumulate_as_discrete_steps(self):
+        self.talon.settings._values = {
+            "user.mouse_wheel_down_amount": 120,
+            "user.mouse_wheel_horizontal_amount": 40,
+        }
+        for _ in range(5):
+            self.module.MainActions.mouse_scroll(24)
+        for _ in range(2):
+            self.module.MainActions.mouse_scroll(0, -20)
+
+        self.assertEqual(self.talon.actions.scroll_emissions, [(1, 0), (0, -1)])
+        self.assertEqual(self.talon.actions.continuous_scroll_attempts, [])
+        self.assertAlmostEqual(self.module._vertical_scroll_remainder, 0.0)
+        self.assertAlmostEqual(self.module._horizontal_scroll_remainder, 0.0)
+
     def test_fractional_line_scroll_bypasses_accumulation(self):
         self.module._vertical_scroll_remainder = 0.4
         self.module._horizontal_scroll_remainder = 0.3

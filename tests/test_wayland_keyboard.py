@@ -260,7 +260,7 @@ class VirtualKeyboardTests(unittest.TestCase):
     def test_temporary_modifier_release_preserves_preheld_keys(self):
         self.make_ready()
         self.keyboard_adapter.send("ctrl:down")
-        down, _up = modifier_chord("ctrl")
+        down = modifier_chord("ctrl")
 
         pressed = self.keyboard_adapter._emit_strokes(down)
         self.keyboard_adapter._release_presses(pressed)
@@ -270,7 +270,7 @@ class VirtualKeyboardTests(unittest.TestCase):
         self.keyboard_adapter.send("ctrl:up")
 
     def _press_temporary(self, modifiers):
-        down, _up = modifier_chord(modifiers)
+        down = modifier_chord(modifiers)
         return self.keyboard_adapter._emit_strokes(down)
 
     def test_temporary_release_does_not_release_a_repressed_key(self):

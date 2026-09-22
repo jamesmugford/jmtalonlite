@@ -97,10 +97,8 @@ def parse_key_spec(key_spec: str) -> tuple[KeyStroke, ...]:
     return tuple(strokes)
 
 
-def modifier_chord(
-    key_spec: str,
-) -> tuple[tuple[KeyStroke, ...], tuple[KeyStroke, ...]]:
-    """Return down and up strokes for one modifier-only Talon chord."""
+def modifier_chord(key_spec: str) -> tuple[KeyStroke, ...]:
+    """Return down strokes for one modifier-only Talon chord."""
     strokes = parse_key_spec(key_spec)
     if (
         len(strokes) != 1
@@ -109,10 +107,7 @@ def modifier_chord(
     ):
         raise ValueError("Modified click requires one modifier-only chord")
     modifiers = strokes[0].modifiers
-    return (
-        (KeyStroke(modifiers, None, KeyAction.DOWN, 1),),
-        (KeyStroke(modifiers, None, KeyAction.UP, 1),),
-    )
+    return (KeyStroke(modifiers, None, KeyAction.DOWN, 1),)
 
 
 def plan_key_events(
