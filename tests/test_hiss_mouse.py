@@ -1,27 +1,13 @@
-import importlib.util
 import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 
-class FakeContext:
-    def action_class(self, _namespace):
-        return lambda cls: cls
-
-
-class FakeModule:
-    def setting(self, _name, **_kwargs):
-        pass
-
-    def action_class(self, cls):
-        return cls
-
-
-class FakeApp:
-    def register(self, _event, _callback):
-        pass
+if __package__:
+    from .talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
 
 
 class FakeSettings:
@@ -68,17 +54,12 @@ def load_hiss_module(*, clear_state, autostart=False):
     talon.app = FakeApp()
     talon.settings = FakeSettings(autostart)
     path = root / "plugins" / "hiss_mouse.py"
-    spec = importlib.util.spec_from_file_location(
-        "plugins.hiss_mouse_under_test",
-        path,
-    )
-    module = importlib.util.module_from_spec(spec)
     key = "_jm_talon_lite_hiss_mouse_enabled"
     old_state = getattr(sys, key, None)
     if clear_state and hasattr(sys, key):
         delattr(sys, key)
-    with patch.dict(sys.modules, {"talon": talon}):
-        spec.loader.exec_module(module)
+    module = load_talon_module("plugins.hiss_mouse_under_test", path, {"talon": talon})
+    talon.actions.user.hiss_mouse_enable = module.Actions.hiss_mouse_enable
     return module, talon, old_state
 
 
@@ -132,6 +113,31 @@ class HissMouseTests(unittest.TestCase):
         reloaded._on_ready()
 
         self.assertFalse(reloaded.Actions.hiss_mouse_enabled())
+
+    def test_reload_before_ready_still_applies_autostart(self):
+        first, _talon, _old_state = load_hiss_module(clear_state=True, autostart=True)
+        self.assertFalse(hasattr(sys, first._STATE_KEY))
+        reloaded, _talon, _old_state = load_hiss_module(
+            clear_state=False, autostart=True
+        )
+        reloaded._on_ready()
+        self.assertTrue(reloaded.Actions.hiss_mouse_enabled())
+
+    def test_explicit_disable_before_ready_is_preserved(self):
+        loaded, _talon, _old_state = load_hiss_module(clear_state=True, autostart=True)
+        loaded.Actions.hiss_mouse_disable()
+        loaded._on_ready()
+        self.assertFalse(loaded.Actions.hiss_mouse_enabled())
+
+    def test_disabled_startup_does_not_toggle_control_mouse(self):
+        loaded, talon, _old_state = load_hiss_module(clear_state=True, autostart=False)
+        talon.actions.control1_enabled = True
+        loaded._on_ready()
+        talon.settings.autostart = True
+        loaded._on_ready()
+        self.assertFalse(loaded.Actions.hiss_mouse_enabled())
+        self.assertTrue(talon.actions.control1_enabled)
+        self.assertEqual(talon.actions.control1_toggles, [])
 
 
 if __name__ == "__main__":

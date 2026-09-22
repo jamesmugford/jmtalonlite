@@ -3,45 +3,16 @@
 import os
 import sys
 
-from talon import Module, actions, app, settings, tracking_system, ui
+from talon import Module, actions, app, settings, tracking_system
 
 _CALLBACK_KEY = "_jm_talon_lite_control1_pointer_callback"
 _STATE_KEY = "_jm_talon_lite_control1_pointer_enabled"
-_legacy_state_present = "_registered" in globals()
-_legacy_registered = bool(globals().get("_registered", False))
-_legacy_callback = globals().get("_on_gaze")
 # Talon does not automatically remove tracking callbacks on script reload.
 _retained_callback = getattr(sys, _CALLBACK_KEY, None)
-_had_retained_state = (
-    hasattr(sys, _STATE_KEY) or _legacy_state_present or _retained_callback is not None
-)
-_resume_registered = bool(
-    getattr(
-        sys,
-        _STATE_KEY,
-        _legacy_registered or _retained_callback is not None,
-    )
-)
-_previous_callbacks = {
-    _legacy_callback,
-    _retained_callback,
-}
-for _previous_callback in _previous_callbacks - {None}:
-    for _ in range(16):
-        tracking_system.unregister("gaze", _previous_callback)
-_legacy_screen_callback = globals().get("_on_screen_change")
-if _legacy_screen_callback is not None:
-    try:
-        ui.unregister("screen_change", _legacy_screen_callback)
-    except (KeyError, ValueError):
-        pass
-_resume_callback = _retained_callback or _legacy_callback
-if _resume_registered and _resume_callback is not None:
-    setattr(sys, _CALLBACK_KEY, _resume_callback)
-elif hasattr(sys, _CALLBACK_KEY):
-    delattr(sys, _CALLBACK_KEY)
-if _had_retained_state:
-    setattr(sys, _STATE_KEY, _resume_registered)
+if _retained_callback is not None:
+    tracking_system.unregister("gaze", _retained_callback)
+    if getattr(sys, _CALLBACK_KEY, None) is _retained_callback:
+        delattr(sys, _CALLBACK_KEY)
 
 from talon.plugins import eye_mouse  # noqa: E402
 
@@ -74,29 +45,26 @@ def _native_pointer_available() -> bool:
         return False
 
 
-def _clear_gaze_subscriptions(callback) -> None:
-    """Remove every retained registration for one gaze callback."""
-    for _ in range(16):
-        tracking_system.unregister("gaze", callback)
-
-
 def _register_gaze() -> None:
     """Register exactly one process-retained gaze callback."""
     global _registered
-    _clear_gaze_subscriptions(_on_gaze)
+    setattr(sys, _STATE_KEY, True)
+    if _registered:
+        return
     tracking_system.register("gaze", _on_gaze)
     setattr(sys, _CALLBACK_KEY, _on_gaze)
-    setattr(sys, _STATE_KEY, True)
     _registered = True
 
 
 def _unregister_gaze() -> None:
     """Remove this module generation's gaze callback idempotently."""
     global _registered
-    _clear_gaze_subscriptions(_on_gaze)
+    setattr(sys, _STATE_KEY, False)
+    if not _registered:
+        return
+    tracking_system.unregister("gaze", _on_gaze)
     if getattr(sys, _CALLBACK_KEY, None) is _on_gaze:
         delattr(sys, _CALLBACK_KEY)
-    setattr(sys, _STATE_KEY, False)
     _registered = False
 
 
@@ -141,11 +109,15 @@ class Actions:
 
 
 def _on_ready() -> None:
-    """Honor the forwarding autostart setting after Talon is ready."""
-    if not _had_retained_state and settings.get(
-        "user.control1_pointer_forwarder_autostart"
-    ):
+    """Resolve startup intent once, then reconcile callback ownership."""
+    enabled = getattr(sys, _STATE_KEY, None)
+    if enabled is None:
+        enabled = bool(settings.get("user.control1_pointer_forwarder_autostart"))
+        setattr(sys, _STATE_KEY, enabled)
+    if enabled and not _registered:
         actions.user.control1_pointer_forwarder_start()
+    elif not enabled and _registered:
+        _unregister_gaze()
 
 
 def _on_quit() -> None:
@@ -153,8 +125,7 @@ def _on_quit() -> None:
     _unregister_gaze()
 
 
-setattr(sys, _STATE_KEY, _resume_registered)
-if _resume_registered:
+if getattr(sys, _STATE_KEY, False):
     _register_gaze()
 
 app.register("ready", _on_ready)

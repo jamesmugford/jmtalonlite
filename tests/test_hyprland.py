@@ -1,37 +1,16 @@
-import importlib.util
 import io
 import os
 import subprocess
-import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 
-class _FakeContext:
-    def __init__(self):
-        self.matches = ""
-        self.tags = []
-
-    def action_class(self, *_args):
-        return lambda cls: cls
-
-
-class _FakeModule:
-    def tag(self, *_args, **_kwargs):
-        pass
-
-    def setting(self, *_args, **_kwargs):
-        pass
-
-    def action_class(self, cls):
-        return cls
-
-
-class _FakeApp:
-    def register(self, *_args):
-        pass
+if __package__:
+    from .talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
 
 
 class _FakeSettings:
@@ -41,17 +20,13 @@ class _FakeSettings:
 
 def _load_hyprland_module():
     talon = types.ModuleType("talon")
-    talon.Context = _FakeContext
-    talon.Module = _FakeModule
-    talon.app = _FakeApp()
+    talon.Context = FakeContext
+    talon.Module = FakeModule
+    talon.app = FakeApp()
     talon.settings = _FakeSettings()
 
     path = Path(__file__).resolve().parents[1] / "apps" / "hyprland" / "hyprland.py"
-    spec = importlib.util.spec_from_file_location("test_hyprland_module", path)
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"talon": talon}):
-        spec.loader.exec_module(module)
-    return module
+    return load_talon_module("test_hyprland_module", path, {"talon": talon})
 
 
 class HyprlandTests(unittest.TestCase):

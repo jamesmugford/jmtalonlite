@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 import types
 import unittest
@@ -6,22 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-class FakeContext:
-    def action_class(self, _namespace):
-        return lambda cls: cls
-
-
-class FakeModule:
-    def action_class(self, cls):
-        return cls
-
-
-class FakeApp:
-    def __init__(self):
-        self.callbacks = {}
-
-    def register(self, event, callback):
-        self.callbacks[event] = callback
+if __package__:
+    from .talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
 
 
 class FakeTrackingSystem:
@@ -42,6 +29,7 @@ class FakeCanvas:
         self.close_error = close_error
         self.unregister_count = 0
         self.close_count = 0
+        self.freeze_count = 0
 
     def register(self, _event, _callback):
         if self.register_error is not None:
@@ -54,6 +42,9 @@ class FakeCanvas:
         self.close_count += 1
         if self.close_error is not None:
             raise self.close_error
+
+    def freeze(self):
+        self.freeze_count += 1
 
 
 def make_overlay_environment(*, control1_enabled=False):
@@ -80,33 +71,25 @@ def load_overlay_module(
     *,
     environment=None,
     clear_state=True,
-    legacy_globals=None,
 ):
     root = Path(__file__).resolve().parents[1]
     if environment is None:
         environment = make_overlay_environment()
     talon, canvas_module, plugins_module = environment
     path = root / "plugins" / "tracking_forwarder" / "control1_debug_overlay.py"
-    spec = importlib.util.spec_from_file_location(
-        "plugins.tracking_forwarder.control1_debug_overlay_under_test",
-        path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    if legacy_globals is not None:
-        module.__dict__.update(legacy_globals)
     key = "_jm_talon_lite_control1_overlay_state"
     old_state = getattr(sys, key, None)
     if clear_state and old_state is not None:
         delattr(sys, key)
-    with patch.dict(
-        sys.modules,
+    module = load_talon_module(
+        "plugins.tracking_forwarder.control1_debug_overlay_under_test",
+        path,
         {
             "talon": talon,
             "talon.canvas": canvas_module,
             "talon.plugins": plugins_module,
         },
-    ):
-        spec.loader.exec_module(module)
+    )
     return module, talon, canvas_module, old_state
 
 
@@ -167,6 +150,37 @@ class OverlayCleanupTests(unittest.TestCase):
         self.assertEqual(second.close_count, 1)
         self.assertEqual(self.module._canvas_entries, [])
 
+    def test_stop_attempts_all_cleanup_and_retains_failed_resources_for_retry(self):
+        canvas = FakeCanvas(close_error=RuntimeError("canvas failed"))
+        entry = (canvas, object())
+        self.module._canvas_entries = [entry]
+        self.module._overlay_enabled = True
+        self.module._gaze_registered = True
+        self.talon.tracking_system.callbacks.append(self.module._on_gaze)
+        self.module._publish_reload_state()
+
+        with patch.object(
+            self.talon.tracking_system,
+            "unregister",
+            side_effect=RuntimeError("gaze failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "gaze failed") as raised:
+                self.module.Actions.control1_debug_overlay_stop()
+
+        self.assertEqual(canvas.close_count, 1)
+        self.assertTrue(
+            any("canvas failed" in note for note in raised.exception.__notes__)
+        )
+        self.assertEqual(
+            getattr(sys, self.module._RELOAD_STATE_KEY),
+            (False, (self.module._on_gaze,), (entry,)),
+        )
+        canvas.close_error = None
+        self.module.Actions.control1_debug_overlay_stop()
+        self.assertEqual(canvas.close_count, 2)
+        self.assertEqual(self.talon.tracking_system.callbacks, [])
+        self.assertEqual(self.module._canvas_entries, [])
+
     def test_failed_screen_rebuild_disables_and_unsubscribes_overlay(self):
         canvas = FakeCanvas(register_error=RuntimeError("register failed"))
         self.canvas_module.Canvas.from_screen = lambda _screen: canvas
@@ -211,10 +225,16 @@ class OverlayCleanupTests(unittest.TestCase):
             first.Actions.control1_debug_overlay_start()
             self.assertEqual(talon.tracking_system.callbacks, [first._on_gaze])
 
-            second, _talon, _canvas, _old_state = load_overlay_module(
-                environment=environment,
-                clear_state=False,
-            )
+            with patch.object(
+                talon.tracking_system,
+                "unregister",
+                wraps=talon.tracking_system.unregister,
+            ) as unregister:
+                second, _talon, _canvas, _old_state = load_overlay_module(
+                    environment=environment,
+                    clear_state=False,
+                )
+                unregister.assert_called_once_with("gaze", first._on_gaze)
 
             self.assertTrue(second._overlay_enabled)
             self.assertEqual(talon.tracking_system.callbacks, [second._on_gaze])
@@ -228,41 +248,61 @@ class OverlayCleanupTests(unittest.TestCase):
             if saved_state is not None:
                 setattr(sys, key, saved_state)
 
-    def test_first_reload_closes_legacy_global_resources(self):
-        key = self.module._RELOAD_STATE_KEY
-        saved_state = getattr(sys, key, None)
-        if saved_state is not None:
-            delattr(sys, key)
-        environment = make_overlay_environment()
+    def test_failed_reload_retains_only_resources_needing_cleanup(self):
+        environment = make_overlay_environment(control1_enabled=True)
         talon, _canvas_module, _plugins_module = environment
-        legacy_canvas = FakeCanvas()
 
-        def legacy_callback(*_args):
+        def callback(*_args):
             pass
 
-        talon.tracking_system.callbacks.append(legacy_callback)
-        loaded = None
-        try:
-            loaded, _talon, _canvas, _old_state = load_overlay_module(
-                environment=environment,
-                legacy_globals={
-                    "_overlay_enabled": True,
-                    "_gaze_registered": True,
-                    "_on_gaze": legacy_callback,
-                    "_canvas_entries": [(legacy_canvas, object())],
-                },
+        canvas = FakeCanvas(close_error=RuntimeError("canvas failed"))
+        entry = (canvas, object())
+        talon.tracking_system.callbacks.append(callback)
+        retained = (True, (callback,), (entry,))
+        with patch.object(sys, self.module._RELOAD_STATE_KEY, retained, create=True):
+            with patch.object(
+                talon.tracking_system,
+                "unregister",
+                side_effect=RuntimeError("gaze failed"),
+            ) as unregister:
+                with self.assertRaisesRegex(RuntimeError, "gaze failed") as raised:
+                    load_overlay_module(environment=environment, clear_state=False)
+                unregister.assert_called_once_with("gaze", callback)
+            self.assertEqual(getattr(sys, self.module._RELOAD_STATE_KEY), retained)
+            self.assertTrue(
+                any("canvas failed" in note for note in raised.exception.__notes__)
             )
+            canvas.close_error = None
+            loaded, _talon, _canvas, _old = load_overlay_module(
+                environment=environment, clear_state=False
+            )
+            try:
+                self.assertEqual(canvas.close_count, 2)
+                self.assertTrue(loaded._overlay_enabled)
+                self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
+            finally:
+                loaded.Actions.control1_debug_overlay_stop()
 
+    def test_dependency_failure_retires_resources_but_preserves_enabled_intent(self):
+        talon, _canvas_module, plugins = make_overlay_environment()
+
+        def callback(*_args):
+            pass
+
+        canvas = FakeCanvas()
+        retained = (True, (callback,), ((canvas, object()),))
+        talon.tracking_system.callbacks.append(callback)
+        with patch.object(sys, self.module._RELOAD_STATE_KEY, retained, create=True):
+            with self.assertRaises(ImportError):
+                load_overlay_module(
+                    environment=(talon, types.ModuleType("talon.canvas"), plugins),
+                    clear_state=False,
+                )
             self.assertEqual(talon.tracking_system.callbacks, [])
-            self.assertEqual(legacy_canvas.close_count, 1)
-            self.assertTrue(loaded._overlay_enabled)
-        finally:
-            if loaded is not None:
-                loaded._on_quit()
-            if hasattr(sys, key):
-                delattr(sys, key)
-            if saved_state is not None:
-                setattr(sys, key, saved_state)
+            self.assertEqual(canvas.close_count, 1)
+            self.assertEqual(
+                getattr(sys, self.module._RELOAD_STATE_KEY), (True, (), ())
+            )
 
 
 if __name__ == "__main__":

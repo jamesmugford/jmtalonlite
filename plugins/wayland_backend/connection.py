@@ -27,11 +27,13 @@ class ProtocolAdapter(Protocol):
     interface_name: str
     multiple: bool
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind one announced global and return its negotiated version."""
         ...
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Release one removed global owned by this adapter."""
         ...
 
@@ -204,7 +206,10 @@ class WaylandConnection:
             raise shutdown_error.with_traceback(shutdown_error.__traceback__)
 
     def execute(self, callback: Callable[[], Any], timeout: float = 1.0) -> Any:
-        """Execute a callable synchronously on the Wayland owner thread."""
+        """Run on the owner thread, timing out only while still queued.
+
+        Once claimed, wait for the outcome to avoid ambiguous input replay.
+        """
         timeout = validate_timeout(timeout)
         if not self._running.is_set() or self._stopping.is_set():
             raise CapabilityUnavailable("Wayland connection is not running")
@@ -279,13 +284,13 @@ class WaylandConnection:
         """Return whether the owner thread is processing Wayland events."""
         return self._running.is_set()
 
-    def deactivate(self, interface_name: str, name: int) -> None:
+    def deactivate(self, interface_name: str, global_id: int) -> None:
         """Forget a server-retired global and activate its next candidate."""
-        self._announced_globals.pop(name, None)
+        self._announced_globals.pop(global_id, None)
         with self._state_lock:
             active = self._active_globals.get(interface_name)
             if active is not None:
-                active.pop(name, None)
+                active.pop(global_id, None)
         self._activate_next(interface_name)
 
     def _reset_for_start(self) -> None:
@@ -369,50 +374,50 @@ class WaylandConnection:
         self._ready.set()
 
     def _on_global(
-        self, registry: Any, name: int, interface_name: str, version: int
+        self, registry: Any, global_id: int, interface_name: str, version: int
     ) -> None:
         """Record a supported global and bind it when its adapter is available."""
         adapter = self._adapter_by_interface.get(interface_name)
         if adapter is None:
             return
-        self._announced_globals[name] = (interface_name, version)
+        self._announced_globals[global_id] = (interface_name, version)
         with self._state_lock:
             active = self._active_globals.setdefault(interface_name, {})
             should_bind = adapter.multiple or not active
         if should_bind:
-            self._bind(adapter, registry, name, version)
+            self._bind(adapter, registry, global_id, version)
 
     def _bind(
         self,
         adapter: ProtocolAdapter,
         registry: Any,
-        name: int,
+        global_id: int,
         version: int,
     ) -> None:
         """Bind one global through its adapter and publish its version."""
         assert self._bindings is not None
         interface = self._bindings.interfaces[adapter.interface_name]
-        negotiated = adapter.bind(registry, name, version, interface)
+        negotiated = adapter.bind(registry, global_id, version, interface)
         with self._state_lock:
-            self._active_globals.setdefault(adapter.interface_name, {})[name] = (
+            self._active_globals.setdefault(adapter.interface_name, {})[global_id] = (
                 negotiated
             )
 
-    def _on_global_remove(self, registry: Any, name: int) -> None:
+    def _on_global_remove(self, registry: Any, global_id: int) -> None:
         """Release a removed global and bind the next matching announcement."""
-        announcement = self._announced_globals.pop(name, None)
+        announcement = self._announced_globals.pop(global_id, None)
         if announcement is None:
             return
         interface_name, _version = announcement
         adapter = self._adapter_by_interface[interface_name]
         with self._state_lock:
             active = self._active_globals.get(interface_name, {})
-            was_active = name in active
+            was_active = global_id in active
         if not was_active:
             return
-        adapter.remove(name)
+        adapter.remove(global_id)
         with self._state_lock:
-            self._active_globals[interface_name].pop(name, None)
+            self._active_globals[interface_name].pop(global_id, None)
         if not adapter.multiple:
             self._activate_next(interface_name, registry)
 
@@ -427,9 +432,11 @@ class WaylandConnection:
         registry = registry or self._registry
         if registry is None:
             return
-        for name, (candidate_interface, version) in self._announced_globals.items():
+        for global_id, (candidate_interface, version) in (
+            self._announced_globals.items()
+        ):
             if candidate_interface == interface_name:
-                self._bind(adapter, registry, name, version)
+                self._bind(adapter, registry, global_id, version)
                 return
 
     def _event_loop(self) -> None:

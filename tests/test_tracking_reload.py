@@ -1,22 +1,16 @@
-import importlib.util
+import os
 import sys
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 
-class FakeModule:
-    def setting(self, _name, **_kwargs):
-        pass
-
-    def action_class(self, cls):
-        return cls
-
-
-class FakeApp:
-    def register(self, _event, _callback):
-        pass
+if __package__:
+    from .talon_fakes import FakeApp, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeModule, load_talon_module
 
 
 class FakeSettings:
@@ -30,11 +24,15 @@ class FakeSettings:
 class FakeTrackingSystem:
     def __init__(self):
         self.callbacks = []
+        self.register_calls = []
+        self.unregister_calls = []
 
     def register(self, _event, callback):
+        self.register_calls.append(callback)
         self.callbacks.append(callback)
 
     def unregister(self, _event, callback):
+        self.unregister_calls.append(callback)
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
@@ -54,14 +52,6 @@ def make_talon(*, settings=None):
     talon.app = FakeApp()
     talon.settings = FakeSettings(settings)
     talon.tracking_system = FakeTrackingSystem()
-    talon.ui = types.SimpleNamespace(
-        register=lambda _event, _callback: None,
-        unregistered=[],
-        screens=lambda: (),
-    )
-    talon.ui.unregister = (
-        lambda event, callback: talon.ui.unregistered.append((event, callback))
-    )
     plugins_module = types.ModuleType("talon.plugins")
     plugins_module.eye_mouse = types.SimpleNamespace(
         mouse=types.SimpleNamespace(xy_hist=[], eye_hist=[], delta_hist=[])
@@ -69,45 +59,185 @@ def make_talon(*, settings=None):
     return talon, plugins_module
 
 
-def load_tracking_module(filename, *, talon, plugins_module, legacy_globals=None):
+def load_tracking_module(filename, *, talon, plugins_module):
     root = Path(__file__).resolve().parents[1]
     path = root / "plugins" / "tracking_forwarder" / filename
-    spec = importlib.util.spec_from_file_location(
+    module = load_talon_module(
         f"plugins.tracking_forwarder.{path.stem}_under_test",
         path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    if legacy_globals is not None:
-        module.__dict__.update(legacy_globals)
-    with patch.dict(
-        sys.modules,
         {
             "talon": talon,
             "talon.plugins": plugins_module,
         },
-    ):
-        spec.loader.exec_module(module)
+    )
+    start_name = f"{path.stem}_start"
+    setattr(talon.actions.user, start_name, getattr(module.Actions, start_name))
     return module
 
 
+@contextmanager
+def isolated_tracking_state(prefix):
+    keys = (f"{prefix}_callback", f"{prefix}_enabled")
+    missing = object()
+    saved = {key: getattr(sys, key, missing) for key in keys}
+    for key in keys:
+        sys.__dict__.pop(key, None)
+    try:
+        yield keys
+    finally:
+        for key, value in saved.items():
+            if value is missing:
+                sys.__dict__.pop(key, None)
+            else:
+                setattr(sys, key, value)
+
+
 class TrackingReloadTests(unittest.TestCase):
-    def test_pointer_forwarder_unregisters_legacy_screen_callback(self):
-        talon, plugins_module = make_talon()
+    features = (
+        ("control1_pointer_forwarder", "_jm_talon_lite_control1_pointer"),
+        ("control1_gaze_logger", "_jm_talon_lite_control1_gaze_logger"),
+    )
 
-        def legacy_screen_callback(_screens):
-            pass
-
-        load_tracking_module(
-            "control1_pointer_forwarder.py",
-            talon=talon,
-            plugins_module=plugins_module,
-            legacy_globals={"_on_screen_change": legacy_screen_callback},
+    def setUp(self):
+        self.enterContext(
+            patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=True)
         )
 
-        self.assertEqual(
-            talon.ui.unregistered,
-            [("screen_change", legacy_screen_callback)],
-        )
+    def test_reload_before_ready_does_not_suppress_autostart(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon(
+                    settings={f"user.{feature}_autostart": True}
+                )
+                load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                self.assertFalse(hasattr(sys, keys[1]))
+                reloaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                reloaded._on_ready()
+                reloaded._on_ready()
+                self.assertEqual(talon.tracking_system.callbacks, [reloaded._on_gaze])
+                self.assertEqual(
+                    talon.tracking_system.register_calls, [reloaded._on_gaze]
+                )
+
+    def test_stop_before_ready_overrides_autostart(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon(
+                    settings={f"user.{feature}_autostart": True}
+                )
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                loaded._unregister_gaze()
+                loaded._on_ready()
+                self.assertFalse(getattr(sys, keys[1]))
+                self.assertEqual(talon.tracking_system.callbacks, [])
+
+    def test_disabled_startup_policy_is_resolved_once(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                setting = f"user.{feature}_autostart"
+                talon, plugins = make_talon(settings={setting: False})
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                loaded._on_ready()
+                talon.settings.values[setting] = True
+                loaded._on_ready()
+                self.assertFalse(getattr(sys, keys[1]))
+                self.assertEqual(talon.tracking_system.callbacks, [])
+
+    def test_repeated_start_and_stop_register_and_unregister_once(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix):
+                talon, plugins = make_talon()
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                loaded._register_gaze()
+                loaded._register_gaze()
+                loaded._unregister_gaze()
+                loaded._unregister_gaze()
+                self.assertEqual(talon.tracking_system.callbacks, [])
+                self.assertEqual(
+                    talon.tracking_system.register_calls, [loaded._on_gaze]
+                )
+                self.assertEqual(
+                    talon.tracking_system.unregister_calls, [loaded._on_gaze]
+                )
+
+    def test_failed_stop_preserves_disabled_intent_and_cleanup_handle(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon()
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                loaded._register_gaze()
+                with patch.object(
+                    talon.tracking_system,
+                    "unregister",
+                    side_effect=RuntimeError("busy"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "busy"):
+                        loaded._unregister_gaze()
+                self.assertFalse(getattr(sys, keys[1]))
+                self.assertIs(getattr(sys, keys[0]), loaded._on_gaze)
+                loaded._on_ready()
+                self.assertEqual(talon.tracking_system.callbacks, [])
+                self.assertFalse(hasattr(sys, keys[0]))
+
+    def test_failed_start_is_retried_at_ready_without_reapplying_autostart(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon(
+                    settings={f"user.{feature}_autostart": False}
+                )
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                with patch.object(
+                    talon.tracking_system,
+                    "register",
+                    side_effect=RuntimeError("not ready"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "not ready"):
+                        loaded._register_gaze()
+                self.assertTrue(getattr(sys, keys[1]))
+                self.assertFalse(hasattr(sys, keys[0]))
+                loaded._on_ready()
+                self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
+
+    def test_failed_reload_retains_callback_until_retirement_succeeds(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon()
+                first = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                first._register_gaze()
+                with patch.object(
+                    talon.tracking_system,
+                    "unregister",
+                    side_effect=RuntimeError("busy"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "busy"):
+                        load_tracking_module(
+                            f"{feature}.py", talon=talon, plugins_module=plugins
+                        )
+                self.assertTrue(getattr(sys, keys[1]))
+                self.assertIs(getattr(sys, keys[0]), first._on_gaze)
+                reloaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                self.assertEqual(talon.tracking_system.callbacks, [reloaded._on_gaze])
+                self.assertEqual(
+                    talon.tracking_system.unregister_calls, [first._on_gaze]
+                )
 
     def test_pointer_forwarder_sends_raw_control_mouse_point_to_main_screen(self):
         callback_key = "_jm_talon_lite_control1_pointer_callback"
@@ -160,45 +290,12 @@ class TrackingReloadTests(unittest.TestCase):
             if saved_state is not None:
                 setattr(sys, state_key, saved_state)
 
-    def test_gaze_logger_removes_legacy_global_callback(self):
-        key = "_jm_talon_lite_control1_gaze_logger_callback"
-        state_key = "_jm_talon_lite_control1_gaze_logger_enabled"
-        saved = getattr(sys, key, None)
-        saved_state = getattr(sys, state_key, None)
-        for retained_key in (key, state_key):
-            if hasattr(sys, retained_key):
-                delattr(sys, retained_key)
-        talon, plugins_module = make_talon()
-
-        def legacy_callback(*_args):
-            pass
-
-        talon.tracking_system.callbacks.append(legacy_callback)
-        try:
-            load_tracking_module(
-                "control1_gaze_logger.py",
-                talon=talon,
-                plugins_module=plugins_module,
-                legacy_globals={"_on_gaze": legacy_callback},
-            )
-            self.assertEqual(talon.tracking_system.callbacks, [])
-        finally:
-            if hasattr(sys, key):
-                delattr(sys, key)
-            if hasattr(sys, state_key):
-                delattr(sys, state_key)
-            if saved is not None:
-                setattr(sys, key, saved)
-            if saved_state is not None:
-                setattr(sys, state_key, saved_state)
-
     def test_gaze_logger_replaces_retained_callback_and_resumes(self):
         key = "_jm_talon_lite_control1_gaze_logger_callback"
         state_key = "_jm_talon_lite_control1_gaze_logger_enabled"
         saved = getattr(sys, key, None)
         saved_state = getattr(sys, state_key, None)
-        if hasattr(sys, state_key):
-            delattr(sys, state_key)
+        setattr(sys, state_key, True)
         talon, plugins_module = make_talon()
 
         def retained_callback(*_args):
@@ -215,45 +312,6 @@ class TrackingReloadTests(unittest.TestCase):
             )
             self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
             self.assertIs(getattr(sys, key), loaded._on_gaze)
-        finally:
-            if loaded is not None:
-                loaded._unregister_gaze()
-            if hasattr(sys, key):
-                delattr(sys, key)
-            if hasattr(sys, state_key):
-                delattr(sys, state_key)
-            if saved is not None:
-                setattr(sys, key, saved)
-            if saved_state is not None:
-                setattr(sys, state_key, saved_state)
-
-    def test_pointer_forwarder_resumes_legacy_registered_state(self):
-        key = "_jm_talon_lite_control1_pointer_callback"
-        state_key = "_jm_talon_lite_control1_pointer_enabled"
-        saved = getattr(sys, key, None)
-        saved_state = getattr(sys, state_key, None)
-        for retained_key in (key, state_key):
-            if hasattr(sys, retained_key):
-                delattr(sys, retained_key)
-        talon, plugins_module = make_talon()
-
-        def legacy_callback(*_args):
-            pass
-
-        talon.tracking_system.callbacks.append(legacy_callback)
-        loaded = None
-        try:
-            loaded = load_tracking_module(
-                "control1_pointer_forwarder.py",
-                talon=talon,
-                plugins_module=plugins_module,
-                legacy_globals={
-                    "_registered": True,
-                    "_on_gaze": legacy_callback,
-                },
-            )
-            self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
-            self.assertTrue(loaded._registered)
         finally:
             if loaded is not None:
                 loaded._unregister_gaze()
@@ -329,7 +387,7 @@ class TrackingReloadTests(unittest.TestCase):
                 )
             self.assertEqual(talon.tracking_system.callbacks, [])
             self.assertTrue(getattr(sys, state_key))
-            self.assertIs(getattr(sys, callback_key), retained_callback)
+            self.assertFalse(hasattr(sys, callback_key))
         finally:
             for retained_key in (callback_key, state_key):
                 if hasattr(sys, retained_key):

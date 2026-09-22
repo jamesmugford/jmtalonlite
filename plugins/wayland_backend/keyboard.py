@@ -11,15 +11,14 @@ from .connection import WaylandConnection, monotonic_timestamp_ms, run_cleanup_s
 from .errors import CapabilityUnavailable
 from .key_spec import (
     KeyEvent,
+    KeyPress,
     KeyStroke,
     ResolvedStroke,
-    modifier_chord,
     parse_key_spec,
     plan_key_events,
 )
 from .seats import SeatCapability, SeatRegistry
 from .xkb import (
-    KEY_MAX,
     KEYMAP_FORMAT_XKB_V1,
     XkbKeymap,
     create_keymap_fd,
@@ -48,7 +47,7 @@ class VirtualKeyboard:
         self._seats = seats
         self._timestamp_ms = timestamp_ms
         self._lock = threading.Lock()
-        self._manager_name: int | None = None
+        self._manager_id: int | None = None
         self._manager: Any = None
         self._source_seat_id: int | None = None
         self._source_seat_version = 0
@@ -59,26 +58,28 @@ class VirtualKeyboard:
         self._keyboard: Any = None
         self._keyboard_keymap: bytes | None = None
         self._xkb: XkbKeymap | None = None
-        self._held_keys: list[int] = []
+        self._held_keys: dict[int, KeyPress] = {}
         self._unsubscribe_seats = seats.subscribe(self._on_seat_changed)
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind the virtual-keyboard manager and create its child when ready."""
         negotiated = min(version, interface.version)
-        manager = registry.bind(name, interface, negotiated)
+        manager = registry.bind(global_id, interface, negotiated)
         with self._lock:
-            self._manager_name = name
+            self._manager_id = global_id
             self._manager = manager
         self._maybe_create_virtual()
         return negotiated
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Destroy the virtual keyboard before releasing its removed manager."""
         with self._lock:
-            if name != self._manager_name:
+            if global_id != self._manager_id:
                 return
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (
@@ -96,7 +97,7 @@ class VirtualKeyboard:
         """Release virtual and source keyboards before destroying the manager."""
         with self._lock:
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (
@@ -379,10 +380,11 @@ class VirtualKeyboard:
             keycode = None
             if stroke.key is not None:
                 keycode, implicit = xkb.resolve_key(stroke.key)
+                keycode = validate_keycode(keycode)
                 modifiers.extend(implicit)
             resolved.append(
                 ResolvedStroke(
-                    tuple(dict.fromkeys(modifiers)),
+                    tuple(dict.fromkeys(validate_keycode(code) for code in modifiers)),
                     keycode,
                     stroke.action,
                     stroke.repeat,
@@ -390,21 +392,31 @@ class VirtualKeyboard:
             )
         return tuple(resolved)
 
-    def _emit_strokes(self, strokes: tuple[KeyStroke, ...]) -> tuple[KeyEvent, ...]:
-        """Resolve and emit strokes, returning the applied transition plan."""
+    def _emit_strokes(self, strokes: tuple[KeyStroke, ...]) -> tuple[KeyPress, ...]:
+        """Resolve and emit strokes, returning identities of newly emitted presses."""
         keyboard, xkb = self._require_keyboard()
         resolved = self._resolve_strokes(strokes, xkb)
         plan = plan_key_events(resolved, frozenset(self._held_keys))
+        presses = []
         for event in plan.events:
             self._send_event(keyboard, event)
-        return plan.events
-
-    def _release_pressed_events(self, events: tuple[KeyEvent, ...]) -> None:
-        """Release only key presses introduced by a completed transition plan."""
-        keyboard, _xkb = self._require_keyboard()
-        for event in reversed(events):
             if event.pressed:
-                self._send_event(keyboard, KeyEvent(event.keycode, False))
+                presses.append(self._held_keys[event.keycode])
+        return tuple(presses)
+
+    def _release_presses(self, presses: tuple[KeyPress, ...]) -> None:
+        """Release only recorded presses still held, on the owner thread."""
+        keyboard, _xkb = self._require_keyboard()
+        run_cleanup_steps(
+            (
+                f"keycode {press.keycode}",
+                lambda press=press: self._send_event(
+                    keyboard, KeyEvent(press.keycode, False)
+                ),
+            )
+            for press in reversed(presses)
+            if self._held_keys.get(press.keycode) is press
+        )
 
     def _send_event(self, keyboard: Any, event: KeyEvent) -> None:
         """Emit one key transition and update actual held and modifier state."""
@@ -418,9 +430,9 @@ class VirtualKeyboard:
                 _KEY_PRESSED if event.pressed else _KEY_RELEASED,
             )
             if event.pressed:
-                self._held_keys.append(keycode)
+                self._held_keys[keycode] = KeyPress(keycode)
             else:
-                self._held_keys.remove(keycode)
+                del self._held_keys[keycode]
             with self._lock:
                 xkb = self._xkb
             if xkb is not None:
@@ -445,17 +457,3 @@ class VirtualKeyboard:
                 for keycode in reversed(tuple(self._held_keys))
             )
         )
-
-
-__all__ = [
-    "KEYMAP_FORMAT_XKB_V1",
-    "KEY_MAX",
-    "KeyStroke",
-    "VirtualKeyboard",
-    "XkbKeymap",
-    "create_keymap_fd",
-    "modifier_chord",
-    "parse_key_spec",
-    "read_keymap_fd",
-    "validate_keycode",
-]

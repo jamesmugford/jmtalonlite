@@ -23,22 +23,22 @@ finally:
 
 
 class FakeAdapter:
-    def __init__(self, name: str, log=None, *, multiple: bool = False):
-        self.interface_name = name
+    def __init__(self, interface_name: str, log=None, *, multiple: bool = False):
+        self.interface_name = interface_name
         self.multiple = multiple
         self.log = log if log is not None else []
         self.bound = []
         self.removed = []
 
-    def bind(self, registry, name, version, interface):
+    def bind(self, registry, global_id, version, interface):
         negotiated = min(version, interface.version)
-        self.bound.append((name, negotiated))
-        self.log.append((self.interface_name, "bind", name))
+        self.bound.append((global_id, negotiated))
+        self.log.append((self.interface_name, "bind", global_id))
         return negotiated
 
-    def remove(self, name):
-        self.removed.append(name)
-        self.log.append((self.interface_name, "remove", name))
+    def remove(self, global_id):
+        self.removed.append(global_id)
+        self.log.append((self.interface_name, "remove", global_id))
 
     def ready(self):
         self.log.append((self.interface_name, "ready"))

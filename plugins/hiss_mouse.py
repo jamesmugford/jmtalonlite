@@ -15,19 +15,12 @@ mod.setting(
 )
 
 _STATE_KEY = "_jm_talon_lite_hiss_mouse_enabled"
-_had_retained_state = hasattr(sys, _STATE_KEY) or "_hiss_mouse_enabled" in globals()
-_hiss_mouse_enabled = bool(
-    getattr(sys, _STATE_KEY, globals().get("_hiss_mouse_enabled", False))
-)
+_hiss_mouse_enabled = bool(getattr(sys, _STATE_KEY, False))
 
 
 def _publish_state() -> None:
     """Retain manual Hiss Mouse state across Talon script reloads."""
     setattr(sys, _STATE_KEY, _hiss_mouse_enabled)
-
-
-if _had_retained_state:
-    _publish_state()
 
 
 def _forward_left_click() -> None:
@@ -108,10 +101,12 @@ class Actions:
 
 def _on_ready() -> None:
     """Enable Hiss Mouse when its Talon autostart setting is set."""
-    if _had_retained_state or not settings.get("user.hiss_mouse_autostart"):
+    if hasattr(sys, _STATE_KEY):
         return
-    actions.user.hiss_mouse_enable()
+    if settings.get("user.hiss_mouse_autostart"):
+        actions.user.hiss_mouse_enable()
+    else:
+        _publish_state()
 
 
-_publish_state()
 app.register("ready", _on_ready)

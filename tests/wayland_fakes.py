@@ -39,9 +39,9 @@ class ImmediateConnection:
         self.failures.append(error)
         self.stopping = True
 
-    def deactivate(self, interface_name: str, name: int) -> None:
+    def deactivate(self, interface_name: str, global_id: int) -> None:
         """Record one server-retired global."""
-        self.deactivated.append((interface_name, name))
+        self.deactivated.append((interface_name, global_id))
 
 
 class FakeProxy:
@@ -172,10 +172,10 @@ class FakeRegistry:
         self.bound: list[tuple[int, Any, int, FakeProxy]] = []
         self.event_log: list[tuple[Any, str]] = []
 
-    def bind(self, name: int, interface: Any, version: int) -> FakeProxy:
+    def bind(self, global_id: int, interface: Any, version: int) -> FakeProxy:
         """Return and record a new proxy for one global bind."""
         proxy = FakeProxy(self.event_log)
-        self.bound.append((name, interface, version, proxy))
+        self.bound.append((global_id, interface, version, proxy))
         return proxy
 
 

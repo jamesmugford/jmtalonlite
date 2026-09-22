@@ -6,7 +6,7 @@ Talon's ctrl-alt-shift-super key notation.
 It has no dependency on talonhub/community.
 """
 
-from talon import Context, Module, actions
+from talon import Context, Module
 
 mod = Module()
 ctx = Context()
@@ -76,11 +76,3 @@ def talon_lite_modifiers(m) -> str:
         for modifier in _MODIFIER_ORDER
         if modifier in requested
     )
-
-
-@mod.action_class
-class Actions:
-    def talon_lite_key_chord(chord: str):
-        """Send a chord through the currently configured keyboard backend."""
-
-        actions.key(chord)

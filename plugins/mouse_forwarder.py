@@ -28,18 +28,6 @@ class Actions:
     def mouse_forwarder_touch():
         """Click normally, or release an active drag."""
 
-    def mouse_forwarder_scroll_up(amount: float = 1):
-        """Scroll up via the native Wayland pointer."""
-
-    def mouse_forwarder_scroll_down(amount: float = 1):
-        """Scroll down via the native Wayland pointer."""
-
-    def mouse_forwarder_scroll_left(amount: float = 1):
-        """Scroll left via the native Wayland pointer."""
-
-    def mouse_forwarder_scroll_right(amount: float = 1):
-        """Scroll right via the native Wayland pointer."""
-
     def mouse_forwarder_modified_click(modifiers: str, button: int = 0):
         """Click while holding modifiers via native Wayland input."""
 
@@ -51,13 +39,7 @@ _vertical_scroll_remainder = 0.0
 _horizontal_scroll_remainder = 0.0
 _scroll_lock = threading.Lock()
 _FALLBACK_BUTTONS_KEY = "_jm_talon_lite_fallback_mouse_buttons"
-_fallback_held_buttons = set(
-    getattr(
-        sys,
-        _FALLBACK_BUTTONS_KEY,
-        globals().get("_fallback_held_buttons", ()),
-    )
-)
+_fallback_held_buttons = set(getattr(sys, _FALLBACK_BUTTONS_KEY, ()))
 
 
 def _publish_fallback_buttons() -> None:
@@ -143,7 +125,7 @@ def _forward_scroll(
     *,
     by_lines: bool = False,
 ) -> None:
-    """Accumulate and emit both Talon wheel axes as one transaction."""
+    """Forward fractional lines continuously and accumulate other wheel deltas."""
     global _horizontal_scroll_remainder, _vertical_scroll_remainder
 
     with _scroll_lock:
@@ -204,16 +186,6 @@ def _forward_scroll(
 
         _vertical_scroll_remainder = next_vertical_remainder
         _horizontal_scroll_remainder = next_horizontal_remainder
-
-
-def _forward_vertical_scroll(delta: float) -> None:
-    """Accumulate and emit one vertical Talon wheel delta."""
-    _forward_scroll(vertical_delta=delta)
-
-
-def _forward_horizontal_scroll(delta: float) -> None:
-    """Accumulate and emit one horizontal Talon wheel delta."""
-    _forward_scroll(horizontal_delta=delta)
 
 
 @ctx.action_class("main")
@@ -291,50 +263,6 @@ class UserActions:
             return
         actions.mouse_click(0)
 
-    def mouse_forwarder_scroll_up(amount: float = 1):
-        """Scroll up through native output with graceful fallback."""
-        if not _use_native_pointer():
-            actions.user.mouse_scroll_up(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_down_amount")
-        try:
-            _forward_vertical_scroll(-delta)
-        except CapabilityUnavailable:
-            actions.user.mouse_scroll_up(amount)
-
-    def mouse_forwarder_scroll_down(amount: float = 1):
-        """Scroll down through native output with graceful fallback."""
-        if not _use_native_pointer():
-            actions.user.mouse_scroll_down(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_down_amount")
-        try:
-            _forward_vertical_scroll(delta)
-        except CapabilityUnavailable:
-            actions.user.mouse_scroll_down(amount)
-
-    def mouse_forwarder_scroll_left(amount: float = 1):
-        """Scroll left through native output with graceful fallback."""
-        if not _use_native_pointer():
-            actions.user.mouse_scroll_left(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_horizontal_amount")
-        try:
-            _forward_horizontal_scroll(-delta)
-        except CapabilityUnavailable:
-            actions.user.mouse_scroll_left(amount)
-
-    def mouse_forwarder_scroll_right(amount: float = 1):
-        """Scroll right through native output with graceful fallback."""
-        if not _use_native_pointer():
-            actions.user.mouse_scroll_right(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_horizontal_amount")
-        try:
-            _forward_horizontal_scroll(delta)
-        except CapabilityUnavailable:
-            actions.user.mouse_scroll_right(amount)
-
     def mouse_forwarder_modified_click(modifiers: str, button: int = 0):
         """Perform a modified click through native output when available."""
         if not _use_native_pointer():
@@ -344,50 +272,6 @@ class UserActions:
             actions.user.wayland_pointer_modified_click(modifiers, button)
         except CapabilityUnavailable:
             _fallback_modified_click(modifiers, button)
-
-    def mouse_scroll_up(amount: float = 1):
-        """Override Talon's upward scroll with native output when available."""
-        if not _use_native_pointer():
-            actions.next(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_down_amount")
-        try:
-            _forward_vertical_scroll(-delta)
-        except CapabilityUnavailable:
-            actions.next(amount)
-
-    def mouse_scroll_down(amount: float = 1):
-        """Override Talon's downward scroll with native output when available."""
-        if not _use_native_pointer():
-            actions.next(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_down_amount")
-        try:
-            _forward_vertical_scroll(delta)
-        except CapabilityUnavailable:
-            actions.next(amount)
-
-    def mouse_scroll_left(amount: float = 1):
-        """Override Talon's leftward scroll with native output when available."""
-        if not _use_native_pointer():
-            actions.next(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_horizontal_amount")
-        try:
-            _forward_horizontal_scroll(-delta)
-        except CapabilityUnavailable:
-            actions.next(amount)
-
-    def mouse_scroll_right(amount: float = 1):
-        """Override Talon's rightward scroll with native output when available."""
-        if not _use_native_pointer():
-            actions.next(amount)
-            return
-        delta = amount * settings.get("user.mouse_wheel_horizontal_amount")
-        try:
-            _forward_horizontal_scroll(delta)
-        except CapabilityUnavailable:
-            actions.next(amount)
 
     def mouse_drag_end() -> bool:
         """Release all native buttons and report whether a drag ended."""
@@ -407,13 +291,11 @@ class UserActions:
         """Toggle a native drag button or use the next implementation."""
         if not _use_native_pointer():
             actions.next(button)
-            _record_fallback_button(button, button not in _fallback_held_buttons)
             return
         try:
             actions.user.wayland_pointer_button_toggle(button)
         except (CapabilityUnavailable, ValueError):
             actions.next(button)
-            _record_fallback_button(button, button not in _fallback_held_buttons)
 
 
 def _on_ready() -> None:

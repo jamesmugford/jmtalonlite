@@ -42,6 +42,13 @@ class KeyEvent:
     pressed: bool
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class KeyPress:
+    """One emitted key-down, identified by this record rather than its keycode."""
+
+    keycode: int
+
+
 @dataclass(frozen=True, slots=True)
 class KeyPlan:
     """An ordered keyboard event plan and its resulting held state."""
@@ -51,6 +58,19 @@ class KeyPlan:
 
 
 _MODIFIER_NAMES = frozenset(("ctrl", "alt", "shift", "super"))
+_KEY_NAME_ALIASES = {
+    "win": "super",
+    "return": "enter",
+    "escape": "esc",
+}
+
+
+def _canonical_key_name(name: str) -> str:
+    """Normalize named keys and aliases without changing literal characters."""
+    if len(name) == 1:
+        return name
+    name = name.lower()
+    return _KEY_NAME_ALIASES.get(name, name)
 
 
 def parse_key_spec(key_spec: str) -> tuple[KeyStroke, ...]:
@@ -63,21 +83,22 @@ def parse_key_spec(key_spec: str) -> tuple[KeyStroke, ...]:
         base, action, repeat = _parse_suffix(token)
         parts = base.split("-")
         modifiers = []
-        while parts and parts[0] in _MODIFIER_NAMES:
-            modifier = parts.pop(0)
+        while parts:
+            modifier = _canonical_key_name(parts[0])
+            if modifier not in _MODIFIER_NAMES:
+                break
+            parts.pop(0)
             if modifier not in modifiers:
                 modifiers.append(modifier)
-        key = "-".join(parts) or None
+        key = _canonical_key_name("-".join(parts)) or None
         if key is None and not modifiers:
             raise ValueError(f"Invalid Talon key: {token!r}")
         strokes.append(KeyStroke(tuple(modifiers), key, action, repeat))
     return tuple(strokes)
 
 
-def modifier_chord(
-    key_spec: str,
-) -> tuple[tuple[KeyStroke, ...], tuple[KeyStroke, ...]]:
-    """Return down and up strokes for one modifier-only Talon chord."""
+def modifier_chord(key_spec: str) -> tuple[KeyStroke, ...]:
+    """Return down strokes for one modifier-only Talon chord."""
     strokes = parse_key_spec(key_spec)
     if (
         len(strokes) != 1
@@ -86,10 +107,7 @@ def modifier_chord(
     ):
         raise ValueError("Modified click requires one modifier-only chord")
     modifiers = strokes[0].modifiers
-    return (
-        (KeyStroke(modifiers, None, KeyAction.DOWN, 1),),
-        (KeyStroke(modifiers, None, KeyAction.UP, 1),),
-    )
+    return (KeyStroke(modifiers, None, KeyAction.DOWN, 1),)
 
 
 def plan_key_events(

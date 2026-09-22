@@ -5,45 +5,19 @@ import sys
 from talon import Context, Module, actions, app, tracking_system, ui
 
 _RELOAD_STATE_KEY = "_jm_talon_lite_control1_overlay_state"
-_legacy_enabled = bool(globals().get("_overlay_enabled", False))
-_legacy_callback = (
-    globals().get("_on_gaze") if globals().get("_gaze_registered", False) else None
-)
-_legacy_entries = tuple(globals().get("_canvas_entries", ()))
-_previous_enabled = _legacy_enabled
-_previous_callbacks = {_legacy_callback} - {None}
-_previous_entries = list(_legacy_entries)
-_previous_state = getattr(sys, _RELOAD_STATE_KEY, None)
-if _previous_state is not None:
-    if len(_previous_state) == 3:
-        _state_enabled, _state_callbacks, _state_entries = _previous_state
-        _previous_enabled = bool(_state_enabled)
-        _previous_callbacks.update(_state_callbacks)
-    else:
-        _state_callback, _state_entries = _previous_state
-        _previous_enabled = _previous_enabled or bool(_state_entries)
-        if _state_callback is not None:
-            _previous_callbacks.add(_state_callback)
-    _known_entries = {(id(canvas), id(draw)) for canvas, draw in _previous_entries}
-    for _state_entry in _state_entries:
-        _state_identity = (id(_state_entry[0]), id(_state_entry[1]))
-        if _state_identity not in _known_entries:
-            _previous_entries.append(_state_entry)
-            _known_entries.add(_state_identity)
+_previous_enabled, _previous_callbacks, _previous_entries = getattr(
+    sys, _RELOAD_STATE_KEY, None
+) or (False, (), ())
 
 if _previous_callbacks or _previous_entries:
     _previous_failures = []
     _previous_failed_callbacks = []
     _previous_remaining = []
     for _previous_callback in _previous_callbacks:
-        _previous_callback_failed = False
-        for _ in range(16):
-            try:
-                tracking_system.unregister("gaze", _previous_callback)
-            except Exception as exc:
-                _previous_callback_failed = True
-                _previous_failures.append(("gaze callback", exc))
-        if _previous_callback_failed:
+        try:
+            tracking_system.unregister("gaze", _previous_callback)
+        except Exception as exc:
+            _previous_failures.append(("gaze callback", exc))
             _previous_failed_callbacks.append(_previous_callback)
     for _previous_canvas, _previous_draw in _previous_entries:
         try:
@@ -76,6 +50,7 @@ setattr(sys, _RELOAD_STATE_KEY, (_previous_enabled, (), ()))
 from talon.canvas import Canvas  # noqa: E402
 from talon.plugins import eye_mouse  # noqa: E402
 
+from ..wayland_backend.connection import run_cleanup_steps  # noqa: E402
 from ..wayland_backend.geometry import local_point  # noqa: E402
 
 ctx = Context()
@@ -214,22 +189,9 @@ def _unregister_gaze() -> None:
 
 def _teardown_overlay() -> None:
     """Release gaze and canvas resources while preserving all failures."""
-    first_error = None
-    try:
-        _unregister_gaze()
-    except Exception as exc:
-        first_error = exc
-    try:
-        _close_canvases()
-    except Exception as exc:
-        if first_error is None:
-            first_error = exc
-        else:
-            first_error.add_note(
-                f"Canvas teardown also failed: {type(exc).__name__}: {exc}"
-            )
-    if first_error is not None:
-        raise first_error.with_traceback(first_error.__traceback__)
+    run_cleanup_steps(
+        (("gaze callback", _unregister_gaze), ("canvases", _close_canvases))
+    )
 
 
 def _sync_overlay() -> None:
@@ -289,15 +251,9 @@ def _on_screen_change(_screens) -> None:
 @ctx.action_class("user")
 class UserActions:
     @staticmethod
-    def control1_started() -> None:
-        """Synchronize the overlay after Control Mouse starts."""
-        actions.next()
-        _sync_overlay()
-
-    @staticmethod
-    def control1_stopped() -> None:
-        """Synchronize the overlay after Control Mouse stops."""
-        actions.next()
+    def control1_state_changed(enabled: bool) -> None:
+        """Synchronize the overlay after Control Mouse changes state."""
+        actions.next(enabled)
         _sync_overlay()
 
 
