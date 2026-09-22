@@ -58,8 +58,7 @@ def _run_hyprctl(*args: str) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
-def _hyprctl(*args: str) -> None:
-    result = _run_hyprctl("--", *args)
+def _report_hyprctl_error(result: subprocess.CompletedProcess[str] | None) -> None:
     if result is None:
         return
 
@@ -71,20 +70,14 @@ def _hyprctl(*args: str) -> None:
     output = result.stdout.strip()
     if output and any(line.strip().lower() != "ok" for line in output.splitlines()):
         print(f"hyprland hyprctl error: {output}", file=sys.stderr, flush=True)
+
+
+def _hyprctl(*args: str) -> None:
+    _report_hyprctl_error(_run_hyprctl("--", *args))
 
 
 def _eval(code: str) -> None:
-    result = _run_hyprctl("eval", code)
-    if result is None:
-        return
-    if result.returncode != 0:
-        message = result.stderr.strip() or result.stdout.strip()
-        print(f"hyprland hyprctl error: {message}", file=sys.stderr, flush=True)
-        return
-
-    output = result.stdout.strip()
-    if output and any(line.strip().lower() != "ok" for line in output.splitlines()):
-        print(f"hyprland hyprctl error: {output}", file=sys.stderr, flush=True)
+    _report_hyprctl_error(_run_hyprctl("eval", code))
 
 
 def _lua_string(value: str) -> str:

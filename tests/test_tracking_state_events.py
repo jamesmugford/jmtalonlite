@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 import types
 import unittest
@@ -6,12 +5,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 if __package__:
+    from .talon_fakes import load_talon_module
     from .test_tracking_overlay import (
         FakeCanvas,
         load_overlay_module,
         make_overlay_environment,
     )
 else:
+    from talon_fakes import load_talon_module
     from test_tracking_overlay import (
         FakeCanvas,
         load_overlay_module,
@@ -26,19 +27,19 @@ def load_state_events_module(talon, plugins_module):
         / "tracking_forwarder"
         / "control1_state_events.py"
     )
-    spec = importlib.util.spec_from_file_location(
-        "plugins.tracking_forwarder.control1_state_events_under_test", path
+    return load_talon_module(
+        "plugins.tracking_forwarder.control1_state_events_under_test",
+        path,
+        {"talon": talon, "talon.plugins": plugins_module},
     )
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"talon": talon, "talon.plugins": plugins_module}):
-        spec.loader.exec_module(module)
-    return module
 
 
 class ControlMouseNotificationTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(
-            patch.object(sys, "_jm_talon_lite_control1_overlay_state", None, create=True)
+            patch.object(
+                sys, "_jm_talon_lite_control1_overlay_state", None, create=True
+            )
         )
         self.enterContext(patch("builtins.print"))
         self.enabled = False

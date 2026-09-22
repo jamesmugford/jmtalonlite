@@ -50,6 +50,7 @@ setattr(sys, _RELOAD_STATE_KEY, (_previous_enabled, (), ()))
 from talon.canvas import Canvas  # noqa: E402
 from talon.plugins import eye_mouse  # noqa: E402
 
+from ..wayland_backend.connection import run_cleanup_steps  # noqa: E402
 from ..wayland_backend.geometry import local_point  # noqa: E402
 
 ctx = Context()
@@ -188,22 +189,9 @@ def _unregister_gaze() -> None:
 
 def _teardown_overlay() -> None:
     """Release gaze and canvas resources while preserving all failures."""
-    first_error = None
-    try:
-        _unregister_gaze()
-    except Exception as exc:
-        first_error = exc
-    try:
-        _close_canvases()
-    except Exception as exc:
-        if first_error is None:
-            first_error = exc
-        else:
-            first_error.add_note(
-                f"Canvas teardown also failed: {type(exc).__name__}: {exc}"
-            )
-    if first_error is not None:
-        raise first_error.with_traceback(first_error.__traceback__)
+    run_cleanup_steps(
+        (("gaze callback", _unregister_gaze), ("canvases", _close_canvases))
+    )
 
 
 def _sync_overlay() -> None:

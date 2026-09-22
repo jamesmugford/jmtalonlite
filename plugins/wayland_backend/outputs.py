@@ -232,42 +232,44 @@ class OutputRegistry:
         self._snapshots: dict[int, OutputSnapshot] = {}
         self._listeners: list[Callable[[], None]] = []
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind one wl_output and subscribe to its metadata events."""
         negotiated = min(version, interface.version)
-        proxy = registry.bind(name, interface, negotiated)
-        output = _Output(name, negotiated, proxy)
+        proxy = registry.bind(global_id, interface, negotiated)
+        output = _Output(global_id, negotiated, proxy)
         with self._lock:
-            self._outputs[name] = output
+            self._outputs[global_id] = output
         proxy.dispatcher["geometry"] = self._connection.guard(
             lambda _proxy, x, y, width, height, subpixel, make, model, transform: (
-                self._set_geometry(name, width, height, make, model, transform)
+                self._set_geometry(global_id, width, height, make, model, transform)
             )
         )
         proxy.dispatcher["mode"] = self._connection.guard(
             lambda _proxy, flags, width, height, refresh: self._set_mode(
-                name, flags, width, height, refresh
+                global_id, flags, width, height, refresh
             )
         )
         proxy.dispatcher["done"] = self._connection.guard(
-            lambda _proxy: self._commit(name)
+            lambda _proxy: self._commit(global_id)
         )
         proxy.dispatcher["scale"] = self._connection.guard(
-            lambda _proxy, scale: self._set_scale(name, scale)
+            lambda _proxy, scale: self._set_scale(global_id, scale)
         )
         proxy.dispatcher["name"] = self._connection.guard(
-            lambda _proxy, value: self._set_name(name, value)
+            lambda _proxy, value: self._set_name(global_id, value)
         )
         proxy.dispatcher["description"] = self._connection.guard(
-            lambda _proxy, value: self._set_description(name, value)
+            lambda _proxy, value: self._set_description(global_id, value)
         )
         return negotiated
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Publish output removal before releasing its proxy."""
         with self._lock:
-            output = self._outputs.pop(name, None)
-            had_snapshot = self._snapshots.pop(name, None) is not None
+            output = self._outputs.pop(global_id, None)
+            had_snapshot = self._snapshots.pop(global_id, None) is not None
         if output is None:
             return
         steps = []

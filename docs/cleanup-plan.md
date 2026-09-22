@@ -138,7 +138,7 @@ state may add lines; fewer lines alone is not the measure of success.
     event ordering, startup, restoration, and teardown. This is a structural
     extraction, not a scheduling or threading rewrite.
 
-- [ ] **10 — Finish naming, local duplication, and documentation**
+- [x] **10 — Finish naming, local duplication, and documentation**
   - Improve ambiguous registry-ID names and vague diagnostic locals.
   - Reuse existing cleanup aggregation where policies match and consolidate
     small, genuinely identical test scaffolding.
@@ -440,7 +440,58 @@ state may add lines; fewer lines alone is not the measure of success.
     native keyboard/pointer output and no backend error. No live input was
     injected and no full Talon restart was needed.
   - Ruff remains unavailable. `git diff --check` passed.
-- Next task: **10 — Finish naming, local duplication, and documentation**.
+- Committed as `ffa8bf0`.
+
+### 10 — Complete
+
+- Starting revision: `ffa8bf0`.
+- Renamed numeric registry arguments consistently to `global_id` and manager
+  identifiers to `_manager_id`, leaving textual output/seat names and wire data
+  unchanged. Gaze logging now uses descriptive `mouse`, `position`, `delta`, and
+  `eye_sample` locals. Documented that mailbox timeouts apply while queued; once
+  claimed, a command is awaited to avoid ambiguous replay.
+- Reused `run_cleanup_steps()` for overlay teardown and consolidated the identical
+  Hyprland result-checking policy. Kept transport disconnect's unconditional
+  `finally` handling explicit because its failure semantics differ.
+- Added `tests/talon_fakes.py` for shared basic declarations, app callbacks, and
+  isolated module loading. Feature-specific state/behavior fakes and the bridge's
+  stronger action-signature checks remain local; no Talon simulator was added.
+- Updated README requirements for the bundled ABI/platform, command-layer
+  dependencies, protocol-based capabilities, output-bound gaze, and the optional
+  Hyprland Lua API. Documented supported-Python tests, their limits, and Ruff
+  commands including `core`. Removed the unmeasured latency claim.
+- Added a teardown contract test confirming that both cleanup operations are
+  attempted, the first error is preserved, and failed resources remain retryable.
+  It passed before and after cleanup-helper reuse.
+- Final verification:
+  - All 203 tests passed in each of simulated Wayland, X11, and headless
+    environments using `$HOME/.talon/bin/python` (CPython 3.13) with bytecode
+    writes disabled.
+  - Talon reloaded successfully, with its existing owner-thread warning. A
+    read-only live check confirmed native keyboard/pointer availability, owned
+    scope providers, matching tracking callback state, and no backend error.
+  - No synthetic live input or full restart was needed for this piece.
+  - `git diff --check` passed. Ruff lint/format checks were attempted but could
+    not run because Ruff is not installed.
+
+## Final elegance review
+
+All ten agreed pieces are complete. Against the starting revision `f7011e2`,
+production Python is 276 lines smaller, while the suite grew from 152 to 203
+tests (including removal of obsolete migration tests).
+
+- **Fewer paths:** one shared scroll boundary, direct key commands, and one Control
+  Mouse notification replace redundant action chains.
+- **Explicit ownership:** current press identities, retained callback handles, and
+  a dedicated scope component make lifetimes visible.
+- **Justified abstractions:** the press record addresses stale releases; the scope
+  component groups one responsibility; shared test helpers remove boilerplate.
+- **Clear names:** numeric IDs, textual names, scroll units, and sample values are
+  distinguished. Timeout semantics are explicit.
+- **Readable normal flow:** historical recovery paths and repeated unregister
+  loops are gone; existing lifecycle and failure guarantees remain tested.
+- **Bounded scope:** no new input framework, polling loop, or configuration toggle
+  was introduced. The deferred items below remain outside this cleanup.
 
 ## Deferred backlog
 

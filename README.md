@@ -25,13 +25,13 @@ i3 ports. Hyprland is simply the first optional implementation, not a preferred
 or exclusive compositor. Additional integrations are expected under `apps/` as
 the project and its maintainers move between desktop environments.
 
-It is entirely event-driven and adds negligible latency.
+Input forwarding and window tracking are event-driven.
 
 ## Talon support
 
 The latest supported version is `0.4.0-950-bd10`. Support for
-`0.4.0-1050-3c4a` is planned, but Talon's UI layer currently crashes under Wayland. If you have it working, please let me
-know.
+`0.4.0-1050-3c4a` is planned, but Talon's UI layer currently crashes under Wayland.
+If you have it working, please let me know.
 
 ## Current features
 
@@ -49,7 +49,10 @@ know.
 **This may not be the Talon you know and love.** Some features you may be familiar with from
 Linux X11, macOS, or Windows are unavailable under Wayland.
 
-## Supported compositors
+## Compositor support
+
+Support is capability-based: features depend on the protocols advertised by the
+compositor and its version/configuration. The compositor targets are:
 
 - Hyprland
 - labwc
@@ -60,6 +63,9 @@ Linux X11, macOS, or Windows are unavailable under Wayland.
 - Sway
 - Wayfire
 
+The optional `apps/hyprland/` voice-command layer requires the Lua-capable
+`hyprctl eval` API. It is separate from the shared native Wayland forwarding.
+
 ## Wayland protocols
 
 - `wl_output` - output discovery and main eye-mouse display matching
@@ -67,16 +73,23 @@ Linux X11, macOS, or Windows are unavailable under Wayland.
 - `zwlr_virtual_pointer_manager_v1` - pointer, clicks, scrolling, gaze, hiss, and pop input
 - `zwlr_foreign_toplevel_manager_v1` - application and window-title contexts
 
+Output-bound gaze requires virtual-pointer manager version 2 and a uniquely
+matched output. Startup reports missing capabilities. Forwarded Talon actions
+use the next implementation when the corresponding native capability is
+unavailable.
+
 ## Installation
 
 ```sh
 git clone https://github.com/jamesmugford/jmtalonlite $HOME/.talon/user/jmtalonlite
 ```
 
-Talon Lite is clone-and-run and only requires `libxkbcommon.so.0`, which is
-normally already installed on Wayland desktops. Other runtime dependencies and
-protocol bindings are bundled, so no additional packages, input daemons, or
-uinput setup are required. Restart Talon after cloning.
+The bundled native backend requires Linux x86-64, Talon's CPython 3.13, glibc 2.34
+or newer, and `libxkbcommon.so.0` (normally installed on Wayland desktops).
+PyWayland and the protocol bindings are bundled; no separate input daemon or
+uinput setup is needed. The command-layer dependency is described above.
+Restart Talon after cloning, and once when updating across the historical
+reload-state cleanup. Subsequent script reloads preserve current runtime choices.
 
 Talon's own Tobii udev rule is still required when using an eye tracker and is
 installed by Talon's launcher.
@@ -132,17 +145,22 @@ The incremental cleanup tasks and acceptance criteria are tracked in
 `plugins/wayland_scopes.py` owns Talon app/window scope providers and aliases.
 The protocol adapters and transport remain Talon-free in `plugins/wayland_backend/`.
 
-Run the unit and lightweight runtime tests:
+Run the unit and lightweight runtime tests with Talon's bundled Python:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 "$HOME/.talon/bin/python" -m unittest discover -s tests -v
 ```
+
+The suite uses fake Talon/protocol objects and local resources such as
+`libxkbcommon`, temporary descriptors, and socket pairs. It does not inject live
+input. A passing fake-based suite does not establish end-to-end support for every
+compositor; live checks are recorded separately in the cleanup plan.
 
 If Ruff is installed, run the configured static checks with:
 
 ```sh
-ruff check apps plugins tests
-ruff format --check apps plugins tests
+ruff check apps core plugins tests
+ruff format --check apps core plugins tests
 ```
 
 Rebuild the pinned PyWayland bundle and generated protocol bindings with:

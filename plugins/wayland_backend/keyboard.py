@@ -47,7 +47,7 @@ class VirtualKeyboard:
         self._seats = seats
         self._timestamp_ms = timestamp_ms
         self._lock = threading.Lock()
-        self._manager_name: int | None = None
+        self._manager_id: int | None = None
         self._manager: Any = None
         self._source_seat_id: int | None = None
         self._source_seat_version = 0
@@ -61,23 +61,25 @@ class VirtualKeyboard:
         self._held_keys: dict[int, KeyPress] = {}
         self._unsubscribe_seats = seats.subscribe(self._on_seat_changed)
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind the virtual-keyboard manager and create its child when ready."""
         negotiated = min(version, interface.version)
-        manager = registry.bind(name, interface, negotiated)
+        manager = registry.bind(global_id, interface, negotiated)
         with self._lock:
-            self._manager_name = name
+            self._manager_id = global_id
             self._manager = manager
         self._maybe_create_virtual()
         return negotiated
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Destroy the virtual keyboard before releasing its removed manager."""
         with self._lock:
-            if name != self._manager_name:
+            if global_id != self._manager_id:
                 return
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (
@@ -95,7 +97,7 @@ class VirtualKeyboard:
         """Release virtual and source keyboards before destroying the manager."""
         with self._lock:
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (

@@ -30,22 +30,22 @@ _registered = False
 
 def _control1_sample_line() -> str:
     """Return a formatted line for the latest Control Mouse sample."""
-    m = eye_mouse.mouse
-    if not m.xy_hist or not m.eye_hist:
+    mouse = eye_mouse.mouse
+    if not mouse.xy_hist or not mouse.eye_hist:
         return format_gaze_sample(None)
 
-    xy = m.xy_hist[-1]
-    d = m.delta_hist[-1] if m.delta_hist else None
-    g = m.eye_hist[-1]
+    position = mouse.xy_hist[-1]
+    delta = mouse.delta_hist[-1] if mouse.delta_hist else None
+    eye_sample = mouse.eye_hist[-1]
     return format_gaze_sample(
         GazeSample(
-            timestamp=g.ts,
-            x=xy.x,
-            y=xy.y,
-            gaze_x=g.gaze.x,
-            gaze_y=g.gaze.y,
-            delta_x=None if d is None else d.x,
-            delta_y=None if d is None else d.y,
+            timestamp=eye_sample.ts,
+            x=position.x,
+            y=position.y,
+            gaze_x=eye_sample.gaze.x,
+            gaze_y=eye_sample.gaze.y,
+            delta_x=None if delta is None else delta.x,
+            delta_y=None if delta is None else delta.y,
         )
     )
 

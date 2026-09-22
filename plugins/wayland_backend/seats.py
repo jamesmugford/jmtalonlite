@@ -87,26 +87,28 @@ class SeatRegistry:
         self._selected_id: int | None = None
         self._listeners: list[Callable[[], None]] = []
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind one wl_seat and subscribe to name and capability events."""
         negotiated = min(version, interface.version)
-        proxy = registry.bind(name, interface, negotiated)
-        seat = _Seat(name, negotiated, proxy)
+        proxy = registry.bind(global_id, interface, negotiated)
+        seat = _Seat(global_id, negotiated, proxy)
         with self._lock:
-            self._seats[name] = seat
+            self._seats[global_id] = seat
         proxy.dispatcher["name"] = self._connection.guard(
-            lambda _proxy, value: self._set_name(name, value)
+            lambda _proxy, value: self._set_name(global_id, value)
         )
         proxy.dispatcher["capabilities"] = self._connection.guard(
-            lambda _proxy, value: self._set_capabilities(name, value)
+            lambda _proxy, value: self._set_capabilities(global_id, value)
         )
         self._publish_change()
         return negotiated
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Publish a seat removal before releasing its proxy."""
         with self._lock:
-            seat = self._seats.pop(name, None)
+            seat = self._seats.pop(global_id, None)
         if seat is None:
             return
         run_cleanup_steps(

@@ -8,6 +8,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+if __package__:
+    from .talon_fakes import FakeApp
+else:
+    from talon_fakes import FakeApp
+
 
 class FakeContext:
     def __init__(self):
@@ -37,14 +42,6 @@ class FakeModule:
             if any(isinstance(annotation, str) for annotation in annotations):
                 raise TypeError("Talon action annotations must be runtime types")
         return cls
-
-
-class FakeApp:
-    def __init__(self):
-        self.callbacks = {}
-
-    def register(self, event, callback):
-        self.callbacks[event] = callback
 
 
 class FakeCron:

@@ -1,32 +1,14 @@
-import importlib.util
 import os
-import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 
-class FakeContext:
-    def __init__(self):
-        self.matches = ""
-        self.tags = []
-
-    def action_class(self, _action_namespace):
-        return lambda cls: cls
-
-
-class FakeModule:
-    def tag(self, _name, *, desc):
-        pass
-
-    def action_class(self, cls):
-        return cls
-
-
-class FakeApp:
-    def register(self, _event, _callback):
-        pass
+if __package__:
+    from .talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
 
 
 class FakeSettings:
@@ -105,13 +87,9 @@ def load_mouse_forwarder_module():
     talon.settings = FakeSettings()
     talon.ui = types.SimpleNamespace(screens=lambda: ())
     path = root / "plugins" / "mouse_forwarder.py"
-    spec = importlib.util.spec_from_file_location(
-        "plugins.mouse_forwarder_under_test",
-        path,
+    module = load_talon_module(
+        "plugins.mouse_forwarder_under_test", path, {"talon": talon}
     )
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"talon": talon}):
-        spec.loader.exec_module(module)
     return module, talon
 
 

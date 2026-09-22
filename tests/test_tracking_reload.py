@@ -1,4 +1,3 @@
-import importlib.util
 import os
 import sys
 import types
@@ -8,17 +7,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-class FakeModule:
-    def setting(self, _name, **_kwargs):
-        pass
-
-    def action_class(self, cls):
-        return cls
-
-
-class FakeApp:
-    def register(self, _event, _callback):
-        pass
+if __package__:
+    from .talon_fakes import FakeApp, FakeModule, load_talon_module
+else:
+    from talon_fakes import FakeApp, FakeModule, load_talon_module
 
 
 class FakeSettings:
@@ -70,19 +62,14 @@ def make_talon(*, settings=None):
 def load_tracking_module(filename, *, talon, plugins_module):
     root = Path(__file__).resolve().parents[1]
     path = root / "plugins" / "tracking_forwarder" / filename
-    spec = importlib.util.spec_from_file_location(
+    module = load_talon_module(
         f"plugins.tracking_forwarder.{path.stem}_under_test",
         path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(
-        sys.modules,
         {
             "talon": talon,
             "talon.plugins": plugins_module,
         },
-    ):
-        spec.loader.exec_module(module)
+    )
     start_name = f"{path.stem}_start"
     setattr(talon.actions.user, start_name, getattr(module.Actions, start_name))
     return module

@@ -78,7 +78,7 @@ class ForeignToplevels:
         self._connection = connection
         self._lock = threading.Lock()
         self._listener_lock = threading.Lock()
-        self._manager_name: int | None = None
+        self._manager_id: int | None = None
         self._manager: Any = None
         self._handles: dict[Any, _PendingWindow] = {}
         self._windows: dict[int, Window] = {}
@@ -86,12 +86,14 @@ class ForeignToplevels:
         self._listeners: list[Callable[[Window | None], None]] = []
         self._next_id = 1
 
-    def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
+    def bind(
+        self, registry: Any, global_id: int, version: int, interface: type
+    ) -> int:
         """Bind a toplevel manager and subscribe to manager events."""
         negotiated = min(version, interface.version)
-        manager = registry.bind(name, interface, negotiated)
+        manager = registry.bind(global_id, interface, negotiated)
         with self._lock:
-            self._manager_name = name
+            self._manager_id = global_id
             self._manager = manager
         manager.dispatcher["toplevel"] = self._connection.guard(self._on_toplevel)
         manager.dispatcher["finished"] = self._connection.guard(
@@ -99,13 +101,13 @@ class ForeignToplevels:
         )
         return negotiated
 
-    def remove(self, name: int) -> None:
+    def remove(self, global_id: int) -> None:
         """Release all toplevels before destroying a removed manager."""
         with self._lock:
-            if name != self._manager_name:
+            if global_id != self._manager_id:
                 return
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (
@@ -121,7 +123,7 @@ class ForeignToplevels:
         """Destroy tracked handles and ask the manager to stop sending events."""
         with self._lock:
             manager = self._manager
-            self._manager_name = None
+            self._manager_id = None
             self._manager = None
         run_cleanup_steps(
             (
@@ -231,18 +233,18 @@ class ForeignToplevels:
                 if not manager.destroyed:
                     manager._destroy()
                 return
-            name = self._manager_name
-            self._manager_name = None
+            global_id = self._manager_id
+            self._manager_id = None
             self._manager = None
         steps = [
             ("toplevel handles", lambda: self._clear_windows(notify=True)),
             ("toplevel manager", lambda: self._destroy_manager(manager)),
         ]
-        if name is not None:
+        if global_id is not None:
             steps.append(
                 (
                     "toplevel protocol",
-                    lambda: self._connection.deactivate(self.interface_name, name),
+                    lambda: self._connection.deactivate(self.interface_name, global_id),
                 )
             )
         run_cleanup_steps(steps)
