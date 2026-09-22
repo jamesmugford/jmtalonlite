@@ -119,6 +119,9 @@ hl.bind(
 
 ## Development
 
+The incremental cleanup tasks and acceptance criteria are tracked in
+[the cleanup plan](docs/cleanup-plan.md).
+
 Run the unit and lightweight runtime tests:
 
 ```sh

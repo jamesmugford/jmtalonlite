@@ -110,10 +110,7 @@ def load_mouse_forwarder_module():
         path,
     )
     module = importlib.util.module_from_spec(spec)
-    with (
-        patch.dict(sys.modules, {"talon": talon}),
-        patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=True),
-    ):
+    with patch.dict(sys.modules, {"talon": talon}):
         spec.loader.exec_module(module)
     return module, talon
 
@@ -121,6 +118,9 @@ def load_mouse_forwarder_module():
 class MouseForwarderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.enterClassContext(
+            patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=True)
+        )
         cls.module, cls.talon = load_mouse_forwarder_module()
 
     def setUp(self):
@@ -154,12 +154,7 @@ class MouseForwarderTests(unittest.TestCase):
         self.talon.actions.fail_scroll_call = 2
         self.talon.actions.scroll_failure = self.module.CapabilityUnavailable("lost")
 
-        with patch.dict(
-            os.environ,
-            {"XDG_SESSION_TYPE": "wayland"},
-            clear=True,
-        ):
-            self.module.MainActions.mouse_scroll(0.8, 0.9)
+        self.module.MainActions.mouse_scroll(0.8, 0.9)
 
         self.assertEqual(self.talon.actions.scroll_attempts, [(1, 1)])
         self.assertEqual(self.talon.actions.scroll_emissions, [(1, 1)])
@@ -173,12 +168,7 @@ class MouseForwarderTests(unittest.TestCase):
         self.talon.actions.fail_scroll_call = 1
         self.talon.actions.scroll_failure = self.module.CapabilityUnavailable("lost")
 
-        with patch.dict(
-            os.environ,
-            {"XDG_SESSION_TYPE": "wayland"},
-            clear=True,
-        ):
-            self.module.MainActions.mouse_scroll(0.8, 0.9)
+        self.module.MainActions.mouse_scroll(0.8, 0.9)
 
         self.assertAlmostEqual(self.module._vertical_scroll_remainder, 0.4)
         self.assertAlmostEqual(self.module._horizontal_scroll_remainder, 0.3)
@@ -187,12 +177,7 @@ class MouseForwarderTests(unittest.TestCase):
         self.assertEqual(self.talon.actions.next_calls, [(0.8, 0.9, False)])
 
     def test_modified_click_uses_native_temporary_modifier_token(self):
-        with patch.dict(
-            os.environ,
-            {"XDG_SESSION_TYPE": "wayland"},
-            clear=True,
-        ):
-            self.module._fallback_modified_click("ctrl", 1)
+        self.module._fallback_modified_click("ctrl", 1)
 
         self.assertEqual(self.talon.actions.modifier_starts, ["ctrl"])
         self.assertEqual(self.talon.actions.click_calls, [1])
@@ -253,6 +238,21 @@ class MouseForwarderTests(unittest.TestCase):
         self.assertEqual(self.module._vertical_scroll_remainder, 0.0)
         self.assertEqual(self.module._horizontal_scroll_remainder, 0.0)
 
+    def test_non_wayland_scroll_uses_fallback_despite_native_capability(self):
+        for environment in ({"XDG_SESSION_TYPE": "x11"}, {}):
+            with (
+                self.subTest(environment=environment),
+                patch.dict(os.environ, environment, clear=True),
+            ):
+                self.talon.actions.next_calls.clear()
+                self.module.MainActions.mouse_scroll(0.25, -0.5, by_lines=True)
+
+                self.assertEqual(self.talon.actions.next_calls, [(0.25, -0.5, True)])
+                self.assertEqual(self.talon.actions.scroll_attempts, [])
+                self.assertEqual(self.talon.actions.continuous_scroll_attempts, [])
+                self.assertEqual(self.module._vertical_scroll_remainder, 0.0)
+                self.assertEqual(self.module._horizontal_scroll_remainder, 0.0)
+
     def test_fallback_drag_release_stays_with_fallback_after_capability_appears(self):
         self.talon.actions.pointer_available = False
         self.module.MainActions.mouse_drag(0)
@@ -263,6 +263,11 @@ class MouseForwarderTests(unittest.TestCase):
         self.assertEqual(self.talon.actions.native_button_down, [])
         self.assertEqual(self.talon.actions.native_button_up, [])
         self.assertEqual(self.module._fallback_held_buttons, set())
+
+        self.module.MainActions.mouse_drag(0)
+
+        self.assertEqual(self.talon.actions.native_button_down, [0])
+        self.assertEqual(self.talon.actions.next_calls, [(0,), (0,)])
 
 
 if __name__ == "__main__":

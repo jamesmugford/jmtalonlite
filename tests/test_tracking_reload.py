@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -91,6 +92,11 @@ def load_tracking_module(filename, *, talon, plugins_module, legacy_globals=None
 
 
 class TrackingReloadTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=True)
+        )
+
     def test_pointer_forwarder_unregisters_legacy_screen_callback(self):
         talon, plugins_module = make_talon()
 
