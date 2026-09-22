@@ -128,6 +128,10 @@ hl.bind(
 The incremental cleanup tasks and acceptance criteria are tracked in
 [the cleanup plan](docs/cleanup-plan.md).
 
+`plugins/wayland_runtime.py` owns lifecycle and scheduled event delivery;
+`plugins/wayland_scopes.py` owns Talon app/window scope providers and aliases.
+The protocol adapters and transport remain Talon-free in `plugins/wayland_backend/`.
+
 Run the unit and lightweight runtime tests:
 
 ```sh

@@ -4,6 +4,7 @@ import os
 import sys
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,6 +121,10 @@ def load_bridge_module():
     path = root / "plugins" / "wayland_runtime.py"
     spec = importlib.util.spec_from_file_location("plugins.wayland_runtime", path)
     module = importlib.util.module_from_spec(spec)
+    scopes_spec = importlib.util.spec_from_file_location(
+        "plugins.wayland_scopes", root / "plugins" / "wayland_scopes.py"
+    )
+    scopes_module = importlib.util.module_from_spec(scopes_spec)
     plugins_module = types.ModuleType("talon.plugins")
     plugins_module.eye_mouse = types.SimpleNamespace(main_screen=main_screen)
     talon.eye_mouse = plugins_module.eye_mouse
@@ -128,8 +133,13 @@ def load_bridge_module():
         delattr(sys, "_jm_talon_lite_wayland_bridge")
     with patch.dict(
         sys.modules,
-        {"talon": talon, "talon.plugins": plugins_module},
+        {
+            "talon": talon,
+            "talon.plugins": plugins_module,
+            "plugins.wayland_scopes": scopes_module,
+        },
     ):
+        scopes_spec.loader.exec_module(scopes_module)
         spec.loader.exec_module(module)
     return module, talon
 
@@ -142,6 +152,128 @@ class TalonWaylandBridgeTests(unittest.TestCase):
     def setUp(self):
         self.module._fallback_held_keys.clear()
         self.module._publish_fallback_keys()
+
+    @contextmanager
+    def running_bridge(self, bridge=None):
+        if bridge is None:
+            bridge = self.module._TalonWaylandBridge()
+        with (
+            patch.object(bridge.desktop, "start"),
+            patch.object(bridge.desktop, "stop"),
+            patch.object(
+                bridge.desktop,
+                "status",
+                return_value=types.SimpleNamespace(
+                    protocols=(), running=True, error=None
+                ),
+            ),
+            patch.object(bridge.desktop, "window_context_available", return_value=True),
+            patch.dict(self.talon.registry.decls.apps, clear=True),
+            patch("builtins.print"),
+        ):
+            try:
+                bridge.start()
+                yield bridge
+            finally:
+                bridge.stop()
+
+    def test_window_events_coalesce_into_the_latest_window(self):
+        with self.running_bridge() as bridge:
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(1, "First", "editor", ())
+            )
+            job = self.talon.cron.jobs[-1]
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(2, "Second", "terminal", ())
+            )
+            self.assertIs(self.talon.cron.jobs[-1], job)
+            self.assertEqual(job.delay, "0ms")
+            job.callback()
+            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "Terminal")
+            self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Second")
+
+    def test_new_window_supersedes_delayed_clear_and_stale_job(self):
+        with self.running_bridge() as bridge:
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(1, "First", "editor", ())
+            )
+            self.talon.cron.jobs[-1].callback()
+            bridge._queue_active_window(bridge._generation, None)
+            clear_job = self.talon.cron.jobs[-1]
+            self.assertEqual(clear_job.delay, "20ms")
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(2, "Second", "terminal", ())
+            )
+            replacement = self.talon.cron.jobs[-1]
+            self.assertTrue(clear_job.cancelled)
+            self.assertEqual(replacement.delay, "0ms")
+            replacement.callback()
+            clear_job.callback()
+            self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Second")
+
+    def test_declaration_updates_refresh_matching_app_aliases(self):
+        with self.running_bridge() as bridge:
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(1, "Editor", "Code", ())
+            )
+            self.talon.cron.jobs[-1].callback()
+            app_scope = self.talon.scope.scopes["app"]
+            self.talon.registry.decls.apps["user.editor"] = [
+                types.SimpleNamespace(
+                    is_active=lambda: "code" in app_scope.func()["app"]
+                )
+            ]
+            for callback in tuple(self.talon.registry.callbacks["update_decls"]):
+                callback(None)
+            self.assertEqual(app_scope.func()["app"], {"Code", "code", "user.editor"})
+
+    def test_context_loss_restores_providers_and_recovery_reinstalls_them(self):
+        app_scope = self.talon.scope.scopes["app"]
+        win_scope = self.talon.scope.scopes["win"]
+        original_app, original_win = app_scope.func, win_scope.func
+        with self.running_bridge() as bridge:
+            with patch.object(
+                bridge.desktop, "window_context_available", return_value=False
+            ):
+                bridge._queue_active_window(bridge._generation, None)
+                self.talon.cron.jobs[-1].callback()
+                self.assertIs(app_scope.func, original_app)
+                self.assertIs(win_scope.func, original_win)
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(1, "Recovered", "editor", ())
+            )
+            self.talon.cron.jobs[-1].callback()
+            self.assertEqual(win_scope.func()["title"], "Recovered")
+        self.assertIs(app_scope.func, original_app)
+        self.assertIs(win_scope.func, original_win)
+
+    def test_replacement_captures_providers_after_predecessor_stops(self):
+        app_scope = self.talon.scope.scopes["app"]
+        win_scope = self.talon.scope.scopes["win"]
+        original_app, original_win = app_scope.func, win_scope.func
+        with self.running_bridge():
+            installed_app = app_scope.func
+            replacement = self.module._TalonWaylandBridge()
+            self.assertIs(app_scope.func, installed_app)
+            self.assertEqual(len(self.talon.registry.callbacks["update_decls"]), 1)
+        with self.running_bridge(replacement):
+            pass
+        self.assertIs(app_scope.func, original_app)
+        self.assertIs(win_scope.func, original_win)
+
+    def test_stop_does_not_overwrite_another_owners_provider(self):
+        app_scope = self.talon.scope.scopes["app"]
+        original = app_scope.func
+
+        def other_provider():
+            return {"app": {"other"}}
+
+        try:
+            with self.running_bridge():
+                app_scope.func = other_provider
+            self.assertIs(app_scope.func, other_provider)
+        finally:
+            app_scope.func = original
 
     def test_continuous_scroll_action_delegates_to_desktop(self):
         with patch.object(
@@ -181,10 +313,10 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             bridge._queue_active_window(generation, window)
             self.talon.cron.jobs[-1].callback()
 
-            self.assertTrue(bridge.context_available())
-            self.assertEqual(bridge._app_scope()["app"], {"code"})
-            self.assertEqual(bridge._app_scope()["name"], "Code")
-            self.assertEqual(bridge._win_scope()["title"], "Editor")
+            self.assertTrue(bridge.scopes.available())
+            self.assertEqual(self.talon.scope.scopes["app"].func()["app"], {"code"})
+            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "Code")
+            self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Editor")
             bridge.stop()
         self.assertIs(self.talon.scope.scopes["app"].func, original_app)
         self.assertIs(self.talon.scope.scopes["win"].func, original_win)
@@ -211,7 +343,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
                 "window_context_available",
                 return_value=True,
             ),
-            patch.object(bridge, "_install_scope_providers") as install,
+            patch.object(bridge.scopes, "install") as install,
             patch("builtins.print") as output,
         ):
             bridge.start()
@@ -287,12 +419,9 @@ class TalonWaylandBridgeTests(unittest.TestCase):
         bridge = self.module._TalonWaylandBridge()
         app_scope = self.talon.scope.scopes["app"]
         win_scope = self.talon.scope.scopes["win"]
-        bridge._app_scope_decl = app_scope
-        bridge._win_scope_decl = win_scope
-        bridge._scope_originals = (app_scope.func, win_scope.func)
-        app_scope.func = bridge._app_scope_provider
-        win_scope.func = bridge._win_scope_provider
-        bridge._context_available = True
+        original_app, original_win = app_scope.func, win_scope.func
+        bridge.scopes.initialize()
+        bridge.scopes.install()
 
         with (
             patch.object(bridge.desktop, "stop"),
@@ -304,12 +433,13 @@ class TalonWaylandBridgeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "scope update failed"):
                 bridge.stop()
-            self.assertTrue(bridge._app_scope_update_pending)
+            self.assertIs(app_scope.func, original_app)
+            self.assertIs(win_scope.func, original_win)
+            self.assertFalse(bridge.scopes.available())
             self.assertTrue(bridge._cleanup_pending)
             bridge.stop()
 
         self.assertEqual(update.call_count, 2)
-        self.assertFalse(bridge._app_scope_update_pending)
         self.assertFalse(bridge._cleanup_pending)
 
     def test_start_failure_rolls_back_desktop_and_callbacks(self):
@@ -328,7 +458,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
 
         stop.assert_called_once_with()
         self.assertFalse(bridge._started)
-        self.assertFalse(bridge.context_available())
+        self.assertFalse(bridge.scopes.available())
         self.assertEqual(self.talon.registry.callbacks.get("update_decls", []), [])
 
     def test_stale_window_job_does_not_restore_scopes_after_stop(self):
@@ -354,7 +484,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             bridge.stop()
             job.callback()
         self.assertTrue(job.cancelled)
-        self.assertFalse(bridge.context_available())
+        self.assertFalse(bridge.scopes.available())
 
     def test_main_key_falls_back_only_when_native_keyboard_is_unavailable(self):
         bridge = self.module._bridge

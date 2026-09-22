@@ -128,7 +128,7 @@ state may add lines; fewer lines alone is not the measure of success.
   - **Deployment:** coordinate a Talon restart for this compatibility cut; do not
     deploy it through an uncontrolled sequence of live reloads.
 
-- [ ] **09 — Clarify the runtime's responsibilities**
+- [x] **09 — Clarify the runtime's responsibilities**
   - Extract scope/provider management and application-alias handling into one
     focused Talon-side component.
   - Keep backend lifecycle, window-event scheduling, and generation guards under
@@ -411,8 +411,36 @@ state may add lines; fewer lines alone is not the measure of success.
   - Both Ruff checks remain unavailable because Ruff is not installed.
   - `git diff --check` passed. Removed migration names and repeated unregister
     loops have no remaining production references.
-- Pieces 07 and 08 remain uncommitted. Next task: **09 — Clarify the runtime's
-  responsibilities**.
+- Pieces 07 and 08 were committed together as `71817b3`.
+
+### 09 — Complete
+
+- Starting revision: `71817b3`.
+- Extracted `WaylandScopes` into `plugins/wayland_scopes.py`. It owns provider
+  identities, installation/restoration, pending restoration updates, published
+  window values, and application-alias matching. Construction does not capture or
+  change Talon scopes; initialization occurs after the preceding bridge retires.
+- The bridge retains desktop lifecycle, subscription ownership, job scheduling,
+  coalescing, delayed clears, cancellation, and generation/revision checks. Its
+  declaration callback delegates alias refresh to the scope component. App/window
+  actions now read that component directly rather than adding bridge wrappers.
+- Updated the repository layout documentation. The new component remains outside
+  the Talon-free backend and has no independent startup hooks or worker thread.
+- Added six behavior tests before extraction, all passing on the previous code:
+  latest-window coalescing, delayed-clear replacement, alias refresh, capability
+  loss/recovery, deferred provider capture during replacement, and respecting
+  another owner's provider. Existing restoration-failure retries remain covered.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 24 bridge tests passed before and after extraction.
+  - All 202 tests passed with `-m unittest discover -s tests -q`.
+  - Talon reloaded the new component and runtime without an import error; the
+    existing owner-thread startup warning was logged.
+  - A read-only live check confirmed that the installed app/window providers are
+    owned by the new component, publish valid values, and coexist with available
+    native keyboard/pointer output and no backend error. No live input was
+    injected and no full Talon restart was needed.
+  - Ruff remains unavailable. `git diff --check` passed.
+- Next task: **10 — Finish naming, local duplication, and documentation**.
 
 ## Deferred backlog
 
