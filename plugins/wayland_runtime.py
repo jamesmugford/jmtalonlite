@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from itertools import count
 from typing import Any
 
 from talon import Context, Module, actions, app, cron, registry, scope, ui
@@ -12,7 +13,7 @@ from talon.plugins import eye_mouse
 from .wayland_backend.desktop import WaylandDesktop
 from .wayland_backend.errors import CapabilityUnavailable
 from .wayland_backend.geometry import normalize_point
-from .wayland_backend.key_spec import KeyAction, KeyEvent, parse_key_spec
+from .wayland_backend.key_spec import KeyAction, KeyPress, parse_key_spec
 from .wayland_backend.outputs import OutputTarget
 from .wayland_backend.session import is_wayland_session
 from .wayland_backend.windows import Window
@@ -22,6 +23,15 @@ ctx = Context()
 ctx.matches = "os: linux"
 
 _BRIDGE_KEY = "_jm_talon_lite_wayland_bridge"
+_MODIFIER_TOKEN_IDS_KEY = "_jm_talon_lite_modifier_token_ids"
+_modifier_token_ids = getattr(sys, _MODIFIER_TOKEN_IDS_KEY, None)
+if _modifier_token_ids is None:
+    # Continue the preceding bridge's IDs on first adoption, then retain the
+    # allocator itself so an old handle cannot address a new hold after reload.
+    _previous_bridge = getattr(sys, _BRIDGE_KEY, None)
+    _modifier_token_ids = count(getattr(_previous_bridge, "_next_modifier_token", 1))
+    setattr(sys, _MODIFIER_TOKEN_IDS_KEY, _modifier_token_ids)
+
 _LEGACY_RUNTIME_KEY = "_jm_talon_lite_wayland_runtime"
 _LEGACY_CONTEXT_JOB_KEY = "_jm_talon_lite_wayland_context_job"
 _LEGACY_SCOPE_ORIGINALS_KEY = "_jm_talon_lite_wayland_scope_originals"
@@ -92,8 +102,7 @@ class _TalonWaylandBridge:
         self._latest_window: Window | None = None
         self._active_window: Window | None = None
         self._active_apps: set[str] = set()
-        self._modifier_tokens: dict[int, tuple[KeyEvent, ...]] = {}
-        self._next_modifier_token = 1
+        self._modifier_tokens: dict[int, tuple[KeyPress, ...]] = {}
         self._registered_declaration_callback = False
         self._unsubscribe_windows: Callable[[], None] | None = None
 
@@ -223,11 +232,10 @@ class _TalonWaylandBridge:
         return self._context_available
 
     def begin_temporary_modifiers(self, modifiers: str) -> int:
-        """Press unheld modifiers and retain their release plan by token."""
+        """Press unheld modifiers and retain their identities by a unique token."""
         pressed = self.desktop.press_temporary_modifiers(modifiers)
         with self._lock:
-            token = self._next_modifier_token
-            self._next_modifier_token += 1
+            token = next(_modifier_token_ids)
             self._modifier_tokens[token] = pressed
         return token
 

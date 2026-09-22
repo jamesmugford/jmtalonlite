@@ -202,7 +202,7 @@ class VirtualKeyboardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "while it is held"):
             self.keyboard_adapter.send("a")
         self.keyboard_adapter.send("a:up ctrl:up")
-        self.assertEqual(self.keyboard_adapter._held_keys, [])
+        self.assertFalse(self.keyboard_adapter._held_keys)
 
     def test_resolves_an_entire_sequence_before_emitting(self):
         keyboard = self.make_ready()
@@ -233,7 +233,7 @@ class VirtualKeyboardTests(unittest.TestCase):
                 self.keyboard_adapter.send(spec)
 
         self.assertEqual(keyboard.calls, [])
-        self.assertEqual(self.keyboard_adapter._held_keys, [56])
+        self.assertEqual(set(self.keyboard_adapter._held_keys), {56})
         self.assertEqual(xkb.pressed, {56})
         self.assertFalse(self.connection.stopping)
 
@@ -263,18 +263,124 @@ class VirtualKeyboardTests(unittest.TestCase):
         down, _up = modifier_chord("ctrl")
 
         pressed = self.keyboard_adapter._emit_strokes(down)
-        self.keyboard_adapter._release_pressed_events(pressed)
+        self.keyboard_adapter._release_presses(pressed)
 
         self.assertEqual(pressed, ())
-        self.assertEqual(self.keyboard_adapter._held_keys, [29])
+        self.assertEqual(set(self.keyboard_adapter._held_keys), {29})
         self.keyboard_adapter.send("ctrl:up")
+
+    def _press_temporary(self, modifiers):
+        down, _up = modifier_chord(modifiers)
+        return self.keyboard_adapter._emit_strokes(down)
+
+    def test_temporary_release_does_not_release_a_repressed_key(self):
+        keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl")
+        self.keyboard_adapter.send("ctrl:up ctrl:down")
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(pressed)
+        self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(keyboard.calls, [])
+        self.assertIn(29, self.keyboard_adapter._held_keys)
+
+    def test_temporary_release_does_not_cross_keymap_replacement(self):
+        keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl")
+        send_keymap(self.source, b"xkb_keymap { updated };\n\0")
+        self.keyboard_adapter.send("ctrl:down")
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(keyboard.calls, [])
+        self.assertIn(29, self.keyboard_adapter._held_keys)
+
+    def test_temporary_release_does_not_cross_keyboard_recreation(self):
+        old_keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl")
+        self.seat.dispatcher["capabilities"](self.seat, 0)
+        self.seat.dispatcher["capabilities"](self.seat, 2)
+        send_keymap(self.seat.created_keyboards[-1])
+        keyboard = self.manager.created_virtual_keyboards[-1]
+        self.assertTrue(old_keyboard.destroyed)
+        self.keyboard_adapter.send("ctrl:down")
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(keyboard.calls, [])
+        self.assertIn(29, self.keyboard_adapter._held_keys)
+
+    def test_unchanged_keymap_keeps_temporary_cleanup_valid_and_idempotent(self):
+        keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl")
+        send_keymap(self.source)
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(pressed)
+        self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(
+            keyboard.calls,
+            [("key", 12, 29, 0), ("modifiers", 0, 0, 0, 0)],
+        )
+
+    def test_repeated_down_does_not_create_another_temporary_owner(self):
+        keyboard = self.make_ready()
+        first = self._press_temporary("ctrl")
+        second = self._press_temporary("ctrl")
+        self.assertEqual(second, ())
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(second)
+        self.assertEqual(keyboard.calls, [])
+        self.keyboard_adapter._release_presses(first)
+        self.assertNotIn(29, self.keyboard_adapter._held_keys)
+
+    def test_temporary_cleanup_releases_valid_part_of_a_stale_chord(self):
+        keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl-shift")
+        self.keyboard_adapter.send("ctrl:up ctrl:down")
+        keyboard.calls.clear()
+
+        self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(
+            keyboard.calls,
+            [("key", 12, 42, 0), ("modifiers", 4, 0, 0, 0)],
+        )
+        self.assertIn(29, self.keyboard_adapter._held_keys)
+        self.assertNotIn(42, self.keyboard_adapter._held_keys)
+
+    def test_temporary_cleanup_continues_after_one_release_fails(self):
+        keyboard = self.make_ready()
+        pressed = self._press_temporary("ctrl-shift")
+        original_key = keyboard.key
+        attempted = []
+
+        def release(timestamp, keycode, state):
+            attempted.append(keycode)
+            if keycode == 42:
+                raise RuntimeError("shift release failed")
+            original_key(timestamp, keycode, state)
+
+        with patch.object(keyboard, "key", side_effect=release):
+            with self.assertRaisesRegex(RuntimeError, "shift release failed"):
+                self.keyboard_adapter._release_presses(pressed)
+
+        self.assertEqual(attempted, [42, 29])
+        self.assertIn(42, self.keyboard_adapter._held_keys)
+        self.assertNotIn(29, self.keyboard_adapter._held_keys)
+        self.assertTrue(self.connection.stopping)
 
     def test_keymap_replacement_releases_held_keys_and_closes_old_xkb(self):
         keyboard = self.make_ready()
         self.keyboard_adapter.send("ctrl:down")
         send_keymap(self.source, b"xkb_keymap { updated };\n\0")
         self.assertTrue(FakeXkbKeymap.instances[0].closed)
-        self.assertEqual(self.keyboard_adapter._held_keys, [])
+        self.assertFalse(self.keyboard_adapter._held_keys)
         self.assertEqual(
             keyboard.calls[-3:-1], [("key", 12, 29, 0), ("modifiers", 0, 0, 0, 0)]
         )

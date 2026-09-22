@@ -89,7 +89,7 @@ state may add lines; fewer lines alone is not the measure of success.
   - **Done when:** equivalent named keys release the same tracked hold, and an
     invalid keycode cannot leave a partially emitted chord.
 
-- [ ] **06 — Make temporary modifier cleanup lifetime-safe**
+- [x] **06 — Make temporary modifier cleanup lifetime-safe**
   - Associate release records with the actual presses they introduced.
   - Invalidate stale records after keyboard/keymap replacement or
     release-and-repress; keep repeated cleanup harmless.
@@ -300,7 +300,43 @@ state may add lines; fewer lines alone is not the measure of success.
   - `git diff --check` passed.
 - The spoken modifier vocabulary and Hyprland configuration were not changed.
   General keyboard-state planning remains deferred.
-- Next task: **06 — Make temporary modifier cleanup lifetime-safe**.
+- Committed as `e66bc65`.
+
+### 06 — Complete
+
+- Starting revision: `e66bc65`.
+- Added immutable, identity-based `KeyPress` records. An ordered map of current
+  presses replaces the held-key list, preserving reverse-order release without
+  a second state collection or per-key generation counters.
+- Temporary operations return only the presses they introduce. Cleanup checks
+  each record against the current press on the owner thread, skipping expired
+  records while still releasing valid parts of a partially stale chord.
+- Existing key-up and teardown paths retire records, so cleanup cannot cross a
+  release/repress, keymap replacement, or keyboard recreation. Repeated down and
+  preheld-modifier behavior retain the introduced-press contract; no independent
+  reference-counted modifier scopes were added.
+- Talon's integer handles now use a process-retained allocator so an old handle
+  cannot name a new hold after a bridge reload. Initial adoption continues the
+  preceding bridge's counter. Public action signatures are unchanged.
+- Reused `run_cleanup_steps()` to attempt all applicable releases after an
+  individual failure while preserving the first useful error.
+- Added eight regressions covering stale presses, partial staleness, unchanged
+  keymaps, repeated down/cleanup, release failures, and token reuse after reload.
+  Six failed against the preceding implementation.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 53 focused keyboard, facade, and bridge tests passed.
+  - All 187 tests passed with `-m unittest discover -s tests`.
+  - The facade/bridge subset passed again (26 tests) after removing an unnecessary
+    concrete-type dependency from mocked facade tests.
+  - Talon initially reported an import-order error for the new record type;
+    dependency reload recovered. A cached test-package type import was replaced
+    with opaque test values, and that test module then reloaded successfully.
+  - A read-only check inside Talon confirmed available keyboard/pointer output,
+    no backend error, and the retained handle allocator. No live keys or clicks
+    were injected and no restart or enabled-state changes were requested.
+  - Both Ruff commands remain unavailable because Ruff is not installed.
+  - `git diff --check` passed.
+- Next task: **07 — Remove redundant command and action routes**.
 
 ## Deferred backlog
 

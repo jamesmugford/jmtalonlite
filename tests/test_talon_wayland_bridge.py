@@ -242,7 +242,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
     def test_start_recovers_an_autonomously_stopped_desktop(self):
         bridge = self.module._TalonWaylandBridge()
         bridge._started = True
-        bridge._modifier_tokens[1] = (self.module.KeyEvent(29, True),)
+        bridge._modifier_tokens[1] = (self.module.KeyPress(29),)
         status = types.SimpleNamespace(protocols=(), running=False, error="lost")
         with (
             patch.object(bridge.desktop, "start") as start,
@@ -432,7 +432,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
 
     def test_temporary_modifier_tokens_release_exactly_once(self):
         bridge = self.module._TalonWaylandBridge()
-        pressed = (types.SimpleNamespace(keycode=29, pressed=True),)
+        pressed = (object(),)
         with (
             patch.object(
                 bridge.desktop,
@@ -449,6 +449,31 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             bridge.end_temporary_modifiers(token)
 
         release.assert_called_once_with(pressed)
+
+    def test_temporary_token_from_before_reload_cannot_release_a_new_hold(self):
+        bridge = self.module._TalonWaylandBridge()
+        with patch.object(bridge.desktop, "press_temporary_modifiers", return_value=()):
+            old_token = bridge.begin_temporary_modifiers("ctrl")
+
+        self.enterContext(
+            patch.object(sys, "_jm_talon_lite_wayland_bridge", self.module._bridge)
+        )
+        reloaded, _talon = load_bridge_module()
+        new_bridge = reloaded._bridge
+        new_press = (object(),)
+        with (
+            patch.object(
+                new_bridge.desktop, "press_temporary_modifiers", return_value=new_press
+            ),
+            patch.object(new_bridge.desktop, "release_temporary_modifiers") as release,
+        ):
+            new_token = new_bridge.begin_temporary_modifiers("ctrl")
+            new_bridge.end_temporary_modifiers(old_token)
+            release.assert_not_called()
+            self.assertNotEqual(new_token, old_token)
+
+            new_bridge.end_temporary_modifiers(new_token)
+            release.assert_called_once_with(new_press)
 
     def test_fallback_alias_release_allows_native_forwarding_to_resume(self):
         bridge = self.module._bridge

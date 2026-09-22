@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from .bindings import WaylandBindings
 from .connection import WaylandConnection, monotonic_timestamp_ms
 from .errors import CapabilityUnavailable
-from .key_spec import KeyEvent, modifier_chord
+from .key_spec import KeyPress, modifier_chord
 from .keyboard import VirtualKeyboard
 from .outputs import OutputRegistry, OutputSnapshot, OutputTarget
 from .pointer import VirtualPointer, linux_button_code
@@ -111,8 +111,8 @@ class WaylandDesktop:
         modifiers: str,
         *,
         timeout: float = 1.0,
-    ) -> tuple[KeyEvent, ...]:
-        """Press only currently released modifiers and return their transitions."""
+    ) -> tuple[KeyPress, ...]:
+        """Press unheld modifiers and return their opaque press identities."""
         down, _up = modifier_chord(modifiers)
         return self._connection.execute(
             lambda: self._keyboard._emit_strokes(down),
@@ -121,16 +121,16 @@ class WaylandDesktop:
 
     def release_temporary_modifiers(
         self,
-        pressed: tuple[KeyEvent, ...],
+        pressed: tuple[KeyPress, ...],
         *,
         timeout: float = 1.0,
     ) -> None:
-        """Release transitions returned by `press_temporary_modifiers`."""
+        """Release still-current presses returned by `press_temporary_modifiers`."""
         if not self._connection.running() or not self._keyboard.available():
             return
         try:
             self._connection.execute(
-                lambda: self._keyboard._release_pressed_events(pressed),
+                lambda: self._keyboard._release_presses(pressed),
                 timeout,
             )
         except CapabilityUnavailable:
@@ -246,7 +246,7 @@ class WaylandDesktop:
                 self._pointer._click_code(code)
             except Exception as exc:
                 try:
-                    self._keyboard._release_pressed_events(pressed)
+                    self._keyboard._release_presses(pressed)
                 except Exception as cleanup_error:
                     exc.add_note(
                         "Temporary modifier release also failed: "
@@ -254,6 +254,6 @@ class WaylandDesktop:
                     )
                 raise
             else:
-                self._keyboard._release_pressed_events(pressed)
+                self._keyboard._release_presses(pressed)
 
         self._connection.execute(operation, timeout)

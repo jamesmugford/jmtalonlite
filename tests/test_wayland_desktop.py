@@ -9,7 +9,6 @@ sys.path.insert(0, str(PLUGINS))
 try:
     from wayland_backend.desktop import WaylandDesktop
     from wayland_backend.errors import CapabilityUnavailable
-    from wayland_backend.key_spec import KeyEvent
     from wayland_backend.keyboard import VirtualKeyboard
     from wayland_backend.outputs import OutputRegistry
     from wayland_backend.pointer import VirtualPointer
@@ -39,7 +38,7 @@ class WaylandDesktopTests(unittest.TestCase):
         desktop._connection._running.set()
         desktop._connection._owner_thread_id = threading.get_ident()
         calls = []
-        pressed = (KeyEvent(29, True), KeyEvent(42, True))
+        pressed = (object(), object())
         with (
             patch.object(
                 desktop._keyboard,
@@ -61,7 +60,7 @@ class WaylandDesktopTests(unittest.TestCase):
             ),
             patch.object(
                 desktop._keyboard,
-                "_release_pressed_events",
+                "_release_presses",
                 side_effect=lambda events: calls.append(("release", events)),
             ),
             patch.object(
@@ -103,7 +102,7 @@ class WaylandDesktopTests(unittest.TestCase):
         desktop = WaylandDesktop()
         desktop._connection._running.set()
         desktop._connection._owner_thread_id = threading.get_ident()
-        pressed = (KeyEvent(29, True),)
+        pressed = (object(),)
         with (
             patch.object(desktop._keyboard, "_require_keyboard"),
             patch.object(desktop._pointer, "_require_clickable"),
@@ -115,7 +114,7 @@ class WaylandDesktopTests(unittest.TestCase):
             ),
             patch.object(
                 desktop._keyboard,
-                "_release_pressed_events",
+                "_release_presses",
                 side_effect=RuntimeError("release failed"),
             ),
         ):
@@ -128,7 +127,7 @@ class WaylandDesktopTests(unittest.TestCase):
 
     def test_stale_modifier_release_is_safe_after_connection_teardown(self):
         desktop = WaylandDesktop()
-        desktop.release_temporary_modifiers((KeyEvent(29, True),))
+        desktop.release_temporary_modifiers((object(),))
 
     def test_start_and_stop_delegate_lifecycle(self):
         desktop = WaylandDesktop()

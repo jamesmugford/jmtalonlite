@@ -11,6 +11,7 @@ from .connection import WaylandConnection, monotonic_timestamp_ms, run_cleanup_s
 from .errors import CapabilityUnavailable
 from .key_spec import (
     KeyEvent,
+    KeyPress,
     KeyStroke,
     ResolvedStroke,
     modifier_chord,
@@ -59,7 +60,7 @@ class VirtualKeyboard:
         self._keyboard: Any = None
         self._keyboard_keymap: bytes | None = None
         self._xkb: XkbKeymap | None = None
-        self._held_keys: list[int] = []
+        self._held_keys: dict[int, KeyPress] = {}
         self._unsubscribe_seats = seats.subscribe(self._on_seat_changed)
 
     def bind(self, registry: Any, name: int, version: int, interface: type) -> int:
@@ -391,21 +392,31 @@ class VirtualKeyboard:
             )
         return tuple(resolved)
 
-    def _emit_strokes(self, strokes: tuple[KeyStroke, ...]) -> tuple[KeyEvent, ...]:
-        """Resolve and emit strokes, returning the applied transition plan."""
+    def _emit_strokes(self, strokes: tuple[KeyStroke, ...]) -> tuple[KeyPress, ...]:
+        """Resolve and emit strokes, returning identities of newly emitted presses."""
         keyboard, xkb = self._require_keyboard()
         resolved = self._resolve_strokes(strokes, xkb)
         plan = plan_key_events(resolved, frozenset(self._held_keys))
+        presses = []
         for event in plan.events:
             self._send_event(keyboard, event)
-        return plan.events
-
-    def _release_pressed_events(self, events: tuple[KeyEvent, ...]) -> None:
-        """Release only key presses introduced by a completed transition plan."""
-        keyboard, _xkb = self._require_keyboard()
-        for event in reversed(events):
             if event.pressed:
-                self._send_event(keyboard, KeyEvent(event.keycode, False))
+                presses.append(self._held_keys[event.keycode])
+        return tuple(presses)
+
+    def _release_presses(self, presses: tuple[KeyPress, ...]) -> None:
+        """Release only recorded presses still held, on the owner thread."""
+        keyboard, _xkb = self._require_keyboard()
+        run_cleanup_steps(
+            (
+                f"keycode {press.keycode}",
+                lambda press=press: self._send_event(
+                    keyboard, KeyEvent(press.keycode, False)
+                ),
+            )
+            for press in reversed(presses)
+            if self._held_keys.get(press.keycode) is press
+        )
 
     def _send_event(self, keyboard: Any, event: KeyEvent) -> None:
         """Emit one key transition and update actual held and modifier state."""
@@ -419,9 +430,9 @@ class VirtualKeyboard:
                 _KEY_PRESSED if event.pressed else _KEY_RELEASED,
             )
             if event.pressed:
-                self._held_keys.append(keycode)
+                self._held_keys[keycode] = KeyPress(keycode)
             else:
-                self._held_keys.remove(keycode)
+                del self._held_keys[keycode]
             with self._lock:
                 xkb = self._xkb
             if xkb is not None:

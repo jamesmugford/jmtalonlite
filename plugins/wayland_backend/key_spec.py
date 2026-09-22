@@ -42,6 +42,13 @@ class KeyEvent:
     pressed: bool
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class KeyPress:
+    """One emitted key-down, identified by this record rather than its keycode."""
+
+    keycode: int
+
+
 @dataclass(frozen=True, slots=True)
 class KeyPlan:
     """An ordered keyboard event plan and its resulting held state."""
