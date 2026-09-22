@@ -45,6 +45,38 @@ class KeySpecTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             modifier_chord("ctrl-a")
 
+    def test_modifier_aliases_are_canonical_and_deduplicated(self):
+        self.assertEqual(
+            parse_key_spec("win-d alt-tab"), parse_key_spec("super-d alt-tab")
+        )
+        self.assertEqual(
+            parse_key_spec("WIN-super-win:down"),
+            (KeyStroke(("super",), None, KeyAction.DOWN, 1),),
+        )
+
+    def test_named_aliases_and_case_have_one_parsed_identity(self):
+        for alias, canonical in (
+            ("return", "enter"),
+            ("Return", "enter"),
+            ("ENTER", "enter"),
+            ("escape", "esc"),
+            ("Escape", "esc"),
+        ):
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    parse_key_spec(f"{alias}:down"),
+                    parse_key_spec(f"{canonical}:down"),
+                )
+
+    def test_name_normalization_preserves_literal_case_and_punctuation(self):
+        self.assertEqual(
+            parse_key_spec("win-A win-a win-- win-:"),
+            tuple(
+                KeyStroke(("super",), key, KeyAction.TAP, 1)
+                for key in ("A", "a", "-", ":")
+            ),
+        )
+
     def test_plans_tap_without_mutating_input_state(self):
         held = frozenset({56})
         plan = plan_key_events(

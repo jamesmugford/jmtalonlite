@@ -210,6 +210,53 @@ class VirtualKeyboardTests(unittest.TestCase):
             self.keyboard_adapter.send("ctrl-a unknown")
         self.assertEqual(keyboard.calls, [])
 
+    def test_win_alias_emits_the_same_chord_as_super(self):
+        keyboard = self.make_ready()
+        self.keyboard_adapter.send("super-a")
+        expected = list(keyboard.calls)
+        keyboard.calls.clear()
+
+        self.keyboard_adapter.send("win-a")
+
+        self.assertEqual(keyboard.calls, expected)
+
+    def _assert_invalid_resolution_emits_nothing(self, spec, keys, modifiers):
+        keyboard = self.make_ready()
+        self.keyboard_adapter.send("alt:down")
+        keyboard.calls.clear()
+        xkb = FakeXkbKeymap.instances[-1]
+        with (
+            patch.dict(FakeXkbKeymap.keys, keys),
+            patch.dict(FakeXkbKeymap.modifiers_by_name, modifiers),
+        ):
+            with self.assertRaises(ValueError):
+                self.keyboard_adapter.send(spec)
+
+        self.assertEqual(keyboard.calls, [])
+        self.assertEqual(self.keyboard_adapter._held_keys, [56])
+        self.assertEqual(xkb.pressed, {56})
+        self.assertFalse(self.connection.stopping)
+
+    def test_invalid_primary_keycode_rejects_even_a_valid_prefix(self):
+        self._assert_invalid_resolution_emits_nothing(
+            "b ctrl-a", {"a": (KEY_MAX + 1, ())}, {}
+        )
+
+    def test_invalid_implicit_modifier_rejects_even_a_valid_prefix(self):
+        self._assert_invalid_resolution_emits_nothing(
+            "b ctrl-a", {"a": (30, (KEY_MAX + 1,))}, {}
+        )
+
+    def test_invalid_explicit_modifier_rejects_even_a_valid_prefix(self):
+        self._assert_invalid_resolution_emits_nothing(
+            "b ctrl-a", {}, {"ctrl": KEY_MAX + 1}
+        )
+
+    def test_invalid_keycode_is_rejected_even_for_an_unheld_release(self):
+        self._assert_invalid_resolution_emits_nothing(
+            "a:up", {"a": (KEY_MAX + 1, ())}, {}
+        )
+
     def test_temporary_modifier_release_preserves_preheld_keys(self):
         self.make_ready()
         self.keyboard_adapter.send("ctrl:down")

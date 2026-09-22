@@ -450,6 +450,44 @@ class TalonWaylandBridgeTests(unittest.TestCase):
 
         release.assert_called_once_with(pressed)
 
+    def test_fallback_alias_release_allows_native_forwarding_to_resume(self):
+        bridge = self.module._bridge
+        for pressed, released in (
+            ("return", "enter"),
+            ("ENTER", "Return"),
+            ("win", "super"),
+            ("Escape", "esc"),
+        ):
+            with (
+                self.subTest(pressed=pressed, released=released),
+                patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=True),
+                patch.object(
+                    bridge.desktop, "keyboard_available", return_value=False
+                ) as available,
+                patch.object(bridge.desktop, "send_key") as send_key,
+            ):
+                self.module._fallback_held_keys.clear()
+                self.talon.actions.next_calls.clear()
+                self.module.MainActions.key(f"{pressed}:down")
+                available.return_value = True
+                self.module.MainActions.key(f"{released}:up")
+                self.module.MainActions.key("b")
+
+                self.assertEqual(
+                    self.talon.actions.next_calls,
+                    [(f"{pressed}:down",), (f"{released}:up",)],
+                )
+                send_key.assert_called_once_with("b")
+                self.assertEqual(self.module._fallback_held_keys, set())
+
+    def test_fallback_tracking_preserves_literal_character_case(self):
+        self.module._record_fallback_key_spec("A:down")
+
+        self.assertEqual(self.module._fallback_held_keys, {"key:A"})
+
+        self.module._record_fallback_key_spec("A:up")
+        self.assertEqual(self.module._fallback_held_keys, set())
+
     def test_main_screen_motion_uses_screen_local_normalization(self):
         bridge = self.module._TalonWaylandBridge()
         with patch.object(bridge.desktop, "move_pointer_output_absolute") as move:

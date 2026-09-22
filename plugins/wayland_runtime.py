@@ -60,7 +60,7 @@ def _record_fallback_key_spec(key_spec: str) -> None:
     for stroke in strokes:
         identities = {f"modifier:{name}" for name in stroke.modifiers}
         if stroke.key is not None:
-            identities.add(f"key:{stroke.key.casefold()}")
+            identities.add(f"key:{stroke.key}")
         if stroke.action is KeyAction.DOWN:
             _fallback_held_keys.update(identities)
         elif stroke.action is KeyAction.UP:

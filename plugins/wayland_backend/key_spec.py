@@ -51,6 +51,19 @@ class KeyPlan:
 
 
 _MODIFIER_NAMES = frozenset(("ctrl", "alt", "shift", "super"))
+_KEY_NAME_ALIASES = {
+    "win": "super",
+    "return": "enter",
+    "escape": "esc",
+}
+
+
+def _canonical_key_name(name: str) -> str:
+    """Normalize named keys and aliases without changing literal characters."""
+    if len(name) == 1:
+        return name
+    name = name.lower()
+    return _KEY_NAME_ALIASES.get(name, name)
 
 
 def parse_key_spec(key_spec: str) -> tuple[KeyStroke, ...]:
@@ -63,11 +76,14 @@ def parse_key_spec(key_spec: str) -> tuple[KeyStroke, ...]:
         base, action, repeat = _parse_suffix(token)
         parts = base.split("-")
         modifiers = []
-        while parts and parts[0] in _MODIFIER_NAMES:
-            modifier = parts.pop(0)
+        while parts:
+            modifier = _canonical_key_name(parts[0])
+            if modifier not in _MODIFIER_NAMES:
+                break
+            parts.pop(0)
             if modifier not in modifiers:
                 modifiers.append(modifier)
-        key = "-".join(parts) or None
+        key = _canonical_key_name("-".join(parts)) or None
         if key is None and not modifiers:
             raise ValueError(f"Invalid Talon key: {token!r}")
         strokes.append(KeyStroke(tuple(modifiers), key, action, repeat))

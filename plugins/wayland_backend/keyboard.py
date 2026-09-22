@@ -379,10 +379,11 @@ class VirtualKeyboard:
             keycode = None
             if stroke.key is not None:
                 keycode, implicit = xkb.resolve_key(stroke.key)
+                keycode = validate_keycode(keycode)
                 modifiers.extend(implicit)
             resolved.append(
                 ResolvedStroke(
-                    tuple(dict.fromkeys(modifiers)),
+                    tuple(dict.fromkeys(validate_keycode(code) for code in modifiers)),
                     keycode,
                     stroke.action,
                     stroke.repeat,

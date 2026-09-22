@@ -79,7 +79,7 @@ state may add lines; fewer lines alone is not the measure of success.
     release stays with the correct backend after capability changes. Cover
     nested dispatch and failure propagation.
 
-- [ ] **05 — Tighten the keyboard input boundary**
+- [x] **05 — Tighten the keyboard input boundary**
   - Normalize documented named aliases, including `win`/`super` and
     `return`/`enter`, consistently with fallback hold tracking.
   - Validate all resolved keycodes, including modifiers, before any emission.
@@ -271,8 +271,36 @@ state may add lines; fewer lines alone is not the measure of success.
     drags, restart, or enabled-state changes were requested.
   - Both Ruff commands remain unavailable because Ruff is not installed.
   - `git diff --check` passed.
-- Pieces 03 and 04 remain uncommitted. Next task: **05 — Tighten the keyboard
-  input boundary**.
+- Pieces 03 and 04 were committed together as `73985a2`.
+
+### 05 — Complete
+
+- Starting revision: `73985a2`.
+- Added one parser helper for canonical named keys, with three explicit aliases:
+  `win` to `super`, `return` to `enter`, and `escape` to `esc`. Named-key case is
+  normalized; literal-character case and punctuation are preserved. Modifier
+  aliases are recognized before splitting off the main key and are deduplicated.
+- Fallback bookkeeping now uses the parser's canonical key name directly instead
+  of independently case-folding it. Paired alias releases clear the tracked hold
+  and allow subsequent native forwarding to resume; fallback receives the
+  original Talon arguments.
+- Main and modifier keycodes are validated during resolution, before planning
+  and emitting any events. Rejected requests leave preheld keys, XKB state, and
+  connection availability intact, including when a valid token precedes the bad
+  one or an invalid release would otherwise produce no transition.
+- Added ten tests across parsing, the keyboard adapter, and the Talon bridge.
+  They failed against the old code and pass with the boundary fixes.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 47 focused parser, keyboard, and bridge tests passed.
+  - All 179 tests passed with `-m unittest discover -s tests`.
+  - A read-only check inside Talon confirmed the reloaded bridge has an available
+    keyboard and pointer, no backend error, and the corrected alias parser.
+    No live key presses were injected.
+  - Both Ruff commands remain unavailable because Ruff is not installed.
+  - `git diff --check` passed.
+- The spoken modifier vocabulary and Hyprland configuration were not changed.
+  General keyboard-state planning remains deferred.
+- Next task: **06 — Make temporary modifier cleanup lifetime-safe**.
 
 ## Deferred backlog
 
