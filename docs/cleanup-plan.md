@@ -51,7 +51,7 @@ state may add lines; fewer lines alone is not the measure of success.
   - **Done when:** tests exercise their intended paths regardless of the host
     desktop. Add production bug regressions with their respective fixes below.
 
-- [ ] **02 — Repair Control Mouse notifications**
+- [x] **02 — Repair Control Mouse notifications**
   - Use one `control1_state_changed(enabled)` notification with a concrete default
     implementation and an overlay consumer.
   - Remove the superseded start/stop notification chain and misleading unused
@@ -194,7 +194,37 @@ state may add lines; fewer lines alone is not the measure of success.
   is not installed.
 - `git diff --check` passed.
 - Changes are limited to test code and documentation. No live input or Talon
-  restart was needed. Next task: **02 — Repair Control Mouse notifications**.
+  restart was needed. Committed as `89ad55d`.
+
+### 02 — Complete
+
+- Starting revision: `89ad55d`.
+- Replaced the three-action notification chain with
+  `control1_state_changed(enabled)`, using Talon's concrete `actions.skip()`
+  default. The overlay now implements that same hook and chains to the default
+  before synchronizing its gaze subscription and marker.
+- Removed the superseded started/stopped hooks and the unused state-event
+  start/stop/running actions. Preserved menu interception, diagnostic
+  `control1_state_emit_now()`, and current reload-resource handling.
+- Added eight focused regressions using the existing overlay fakes and an
+  explicitly wired notification chain. They cover the default without a consumer,
+  both state transitions, repeated state, disabled overlays, menu installation
+  without wrapper stacking, unchanged/missing menus, diagnostic emission, and
+  toggle failure propagation. Six failed against the old notification chain.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 16 notification, overlay, and hiss tests passed.
+  - All 161 tests passed with `-m unittest discover -s tests -v`.
+  - Talon reloaded both production files without an import error.
+  - A live `control1_state_emit_now()` diagnostic succeeded through Talon's real
+    action dispatcher and reached overlay synchronization exactly once. Control
+    Mouse and overlay enablement both remained false; no live toggle, click,
+    movement, restart, or face-gesture change was requested.
+  - Talon rejected profiler-based observation (`sys.setprofile`). A temporary
+    wrapper verified the synchronization call instead and was restored in
+    `finally`.
+  - Both Ruff commands remain unavailable because Ruff is not installed.
+  - `git diff --check` passed.
+- Next task: **03 — Fix continuous-to-wheel scroll transitions**.
 
 ## Deferred backlog
 

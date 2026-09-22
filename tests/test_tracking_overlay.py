@@ -42,6 +42,7 @@ class FakeCanvas:
         self.close_error = close_error
         self.unregister_count = 0
         self.close_count = 0
+        self.freeze_count = 0
 
     def register(self, _event, _callback):
         if self.register_error is not None:
@@ -54,6 +55,9 @@ class FakeCanvas:
         self.close_count += 1
         if self.close_error is not None:
             raise self.close_error
+
+    def freeze(self):
+        self.freeze_count += 1
 
 
 def make_overlay_environment(*, control1_enabled=False):

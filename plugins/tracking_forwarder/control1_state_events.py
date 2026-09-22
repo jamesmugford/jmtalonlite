@@ -8,13 +8,9 @@ mod = Module()
 
 
 def _emit_control1_state(enabled: bool) -> None:
-    """Publish one changed Control Mouse state through user hooks."""
+    """Publish Control Mouse state through the user notification hook."""
     print(f"control1 enabled={enabled}")
     actions.user.control1_state_changed(enabled)
-    if enabled:
-        actions.user.control1_started()
-        return
-    actions.user.control1_stopped()
 
 
 def _install_menu_hook() -> bool:
@@ -70,35 +66,9 @@ class TrackingActions:
 @mod.action_class
 class Actions:
     @staticmethod
-    def control1_started() -> None:
-        """Hook called when control1 mouse starts."""
-        pass
-
-    @staticmethod
-    def control1_stopped() -> None:
-        """Hook called when control1 mouse stops."""
-        pass
-
-    @staticmethod
     def control1_state_changed(enabled: bool) -> None:
-        """Hook called when control1 state changes."""
-        pass
-
-    @staticmethod
-    def control1_state_events_start() -> None:
-        """Enable control1 state events (event-driven, no poll loop)."""
-        hooked = _install_menu_hook()
-        print(f"control1_state_events started mode=events hooked={hooked}")
-
-    @staticmethod
-    def control1_state_events_stop() -> None:
-        """No-op: state events are always on once loaded."""
-        print("control1_state_events stopped (no-op in event mode)")
-
-    @staticmethod
-    def control1_state_events_running() -> bool:
-        """Return whether event hooks are active."""
-        return True
+        """Hook called when Control Mouse changes state; optional to override."""
+        actions.skip()
 
     @staticmethod
     def control1_state_emit_now() -> None:

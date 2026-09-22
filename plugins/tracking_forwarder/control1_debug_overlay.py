@@ -289,15 +289,9 @@ def _on_screen_change(_screens) -> None:
 @ctx.action_class("user")
 class UserActions:
     @staticmethod
-    def control1_started() -> None:
-        """Synchronize the overlay after Control Mouse starts."""
-        actions.next()
-        _sync_overlay()
-
-    @staticmethod
-    def control1_stopped() -> None:
-        """Synchronize the overlay after Control Mouse stops."""
-        actions.next()
+    def control1_state_changed(enabled: bool) -> None:
+        """Synchronize the overlay after Control Mouse changes state."""
+        actions.next(enabled)
         _sync_overlay()
 
 
