@@ -407,13 +407,11 @@ class UserActions:
         """Toggle a native drag button or use the next implementation."""
         if not _use_native_pointer():
             actions.next(button)
-            _record_fallback_button(button, button not in _fallback_held_buttons)
             return
         try:
             actions.user.wayland_pointer_button_toggle(button)
         except (CapabilityUnavailable, ValueError):
             actions.next(button)
-            _record_fallback_button(button, button not in _fallback_held_buttons)
 
 
 def _on_ready() -> None:

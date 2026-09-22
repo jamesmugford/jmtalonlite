@@ -61,7 +61,7 @@ state may add lines; fewer lines alone is not the measure of success.
   - **Done when:** enabling and disabling reach overlay synchronization without
     calling an unimplemented action.
 
-- [ ] **03 — Fix continuous-to-wheel scroll transitions**
+- [x] **03 — Fix continuous-to-wheel scroll transitions**
   - Establish the wheel source after addressing each discrete axis.
   - Preserve scaling, direction, continuous scrolling, and frame grouping.
   - Main files: `plugins/wayland_backend/pointer.py`,
@@ -70,7 +70,7 @@ state may add lines; fewer lines alone is not the measure of success.
     combined wheel scrolling emits the correct source on every axis. A failure
     after emission does not cause replay.
 
-- [ ] **04 — Fix fallback drag bookkeeping**
+- [x] **04 — Fix fallback drag bookkeeping**
   - Make standard drag/release actions the authoritative bookkeeping boundary.
   - Correct duplicate updates in the Community-shaped toggle chain while
     preserving native toggle and drag-end behavior.
@@ -224,7 +224,55 @@ state may add lines; fewer lines alone is not the measure of success.
     `finally`.
   - Both Ruff commands remain unavailable because Ruff is not installed.
   - `git diff --check` passed.
-- Next task: **03 — Fix continuous-to-wheel scroll transitions**.
+- Committed as `82a8076`.
+
+### 03 — Complete
+
+- Starting revision: `82a8076`.
+- Discrete scrolling now sets the wheel source immediately after addressing each
+  emitted axis. Both axes still share one wheel frame and one owner-thread
+  operation; scaling, signs, and continuous-scroll framing are unchanged.
+- Added a narrow test interpreter for the persistent per-axis source behavior in
+  Hyprland 0.56.2's `VirtualPointer.cpp`. A nine-case transition matrix covers
+  vertical, horizontal, and combined continuous scrolling, then wheel scrolling,
+  then continuous scrolling again. Before the fix, the combined-continuous to
+  vertical/combined-wheel cases retained the wrong vertical source.
+- Added checks that invalid second-axis values emit nothing, source failure
+  stops the transaction after the first axis, and the Talon forwarder does not
+  replay a failed discrete scroll through fallback.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 32 pointer and mouse-forwarder tests passed.
+  - All 165 tests passed with `-m unittest discover -s tests`.
+  - Talon reloaded the adapter and bridge. Its existing user-thread warning was
+    logged, with no import/startup error.
+  - A read-only status check inside Talon confirmed a running connection,
+    available native pointer, and no backend error. No live scrolling was
+    injected; compositor/client visual behavior was not retested.
+  - Both Ruff commands remain unavailable because Ruff is not installed.
+  - `git diff --check` passed.
+- Changes remained uncommitted when piece 04 began.
+
+### 04 — Complete
+
+- Starting revision: `82a8076`, with the completed piece 03 changes in the
+  working tree.
+- Removed the two outer fallback-state inversions in `mouse_drag_toggle()`.
+  Standard delegated toggles call main drag/release actions, which already record
+  the actual owner. Native toggle and drag-end behavior are unchanged.
+- Added four focused checks using a Community-shaped nested action chain:
+  fallback press/release across capability recovery, native capability appearing
+  during delegation, capability loss at native preflight, and propagation of an
+  unexpected native failure without fallback replay. Three reproduced incorrect
+  ownership before the fix.
+- Verification with Talon's CPython 3.13 and bytecode writes disabled:
+  - All 14 mouse-forwarder tests passed.
+  - All 169 tests passed with `-m unittest discover -s tests`.
+  - Talon reloaded `mouse_forwarder.py` without an import error. No live clicks,
+    drags, restart, or enabled-state changes were requested.
+  - Both Ruff commands remain unavailable because Ruff is not installed.
+  - `git diff --check` passed.
+- Pieces 03 and 04 remain uncommitted. Next task: **05 — Tighten the keyboard
+  input boundary**.
 
 ## Deferred backlog
 

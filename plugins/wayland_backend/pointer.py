@@ -572,7 +572,8 @@ class VirtualPointer:
         )
         try:
             timestamp = self._timestamp_ms()
-            pointer.axis_source(_AXIS_SOURCE_WHEEL)
+            # Set the source after selecting each axis; compositors can retain it
+            # per axis across frames, including after continuous scrolling.
             if vertical:
                 pointer.axis_discrete(
                     timestamp,
@@ -580,6 +581,7 @@ class VirtualPointer:
                     vertical_value,
                     vertical,
                 )
+                pointer.axis_source(_AXIS_SOURCE_WHEEL)
             if horizontal:
                 pointer.axis_discrete(
                     timestamp,
@@ -587,6 +589,7 @@ class VirtualPointer:
                     horizontal_value,
                     horizontal,
                 )
+                pointer.axis_source(_AXIS_SOURCE_WHEEL)
             pointer.frame()
         except Exception as exc:
             self._connection.fail(exc)

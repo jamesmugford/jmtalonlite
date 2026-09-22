@@ -30,6 +30,35 @@ finally:
     sys.path.remove(str(PLUGINS))
 
 
+def scroll_frames(calls):
+    """Interpret requests with Hyprland's persistent, per-axis source state."""
+    # VirtualPointer.cpp selects an axis before axis_source updates it; frame
+    # clears pending events but retains sources. axis resets its event, whereas
+    # axis_discrete retains the source. Keep this model limited to that contract.
+    current_axis = 0
+    sources = [0, 0]
+    pending = {}
+    frames = []
+    for request, *args in calls:
+        if request == "axis":
+            _timestamp, current_axis, distance = args
+            sources[current_axis] = 0
+            pending[current_axis] = (distance, 0)
+        elif request == "axis_discrete":
+            _timestamp, current_axis, distance, steps = args
+            pending[current_axis] = (distance, steps)
+        elif request == "axis_source":
+            sources[current_axis] = args[0]
+        elif request == "frame":
+            frames.append(
+                tuple(
+                    (axis, sources[axis], *pending[axis]) for axis in sorted(pending)
+                )
+            )
+            pending.clear()
+    return frames
+
+
 class PointerValueTests(unittest.TestCase):
     def test_normalized_coordinates_are_clamped_to_inclusive_extent(self):
         self.assertEqual(normalized_to_extent(0.0, 0.0), (0, 0))
@@ -135,9 +164,10 @@ class VirtualPointerTests(unittest.TestCase):
                 ("frame",),
                 ("button", 1234, 0x111, 0),
                 ("frame",),
-                ("axis_source", 0),
                 ("axis_discrete", 1234, 0, 30.0, 2),
+                ("axis_source", 0),
                 ("axis_discrete", 1234, 1, -15.0, -1),
+                ("axis_source", 0),
                 ("frame",),
             ],
         )
@@ -166,6 +196,48 @@ class VirtualPointerTests(unittest.TestCase):
             self.pointer_adapter.scroll_continuous(WAYLAND_FIXED_MAX)
 
         self.assertEqual(self.pointer.calls, [])
+
+    def test_scroll_mode_transitions_set_each_axis_source_and_preserve_frames(self):
+        continuous_cases = (
+            ((0.25, 0), [((0, 2, 3.75, 0),)]),
+            ((0, -0.5), [((1, 2, -7.5, 0),)]),
+            ((0.25, -0.5), [((0, 2, 3.75, 0),), ((1, 2, -7.5, 0),)]),
+        )
+        wheel_cases = (
+            ((2, 0), ((0, 0, 30.0, 2),)),
+            ((0, -1), ((1, 0, -15.0, -1),)),
+            ((2, -1), ((0, 0, 30.0, 2), (1, 0, -15.0, -1))),
+        )
+        for continuous, continuous_frames in continuous_cases:
+            for wheel, wheel_frame in wheel_cases:
+                with self.subTest(continuous=continuous, wheel=wheel):
+                    self.pointer.calls.clear()
+                    self.pointer_adapter.scroll_continuous(*continuous)
+                    self.pointer_adapter.scroll(*wheel)
+                    self.pointer_adapter.scroll_continuous(*continuous)
+
+                    self.assertEqual(
+                        scroll_frames(self.pointer.calls),
+                        [*continuous_frames, wheel_frame, *continuous_frames],
+                    )
+
+    def test_discrete_scroll_validates_both_axes_before_emitting(self):
+        for horizontal, error in ((True, TypeError), (INT32_MAX, ValueError)):
+            with self.subTest(horizontal=horizontal):
+                with self.assertRaises(error):
+                    self.pointer_adapter.scroll(1, horizontal)
+
+                self.assertEqual(self.pointer.calls, [])
+
+    def test_discrete_scroll_source_failure_stops_after_first_axis(self):
+        error = RuntimeError("source failed")
+        with patch.object(self.pointer, "axis_source", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "source failed"):
+                self.pointer_adapter.scroll(2, -1)
+
+        self.assertEqual(self.pointer.calls, [("axis_discrete", 1234, 0, 30.0, 2)])
+        self.assertTrue(self.connection.stopping)
+        self.assertEqual(self.connection.failures, [error])
 
     def test_output_bound_motion_uses_selected_output_without_desktop_scaling(self):
         output = self._bind_output()

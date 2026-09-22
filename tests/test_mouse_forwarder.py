@@ -238,6 +238,16 @@ class MouseForwarderTests(unittest.TestCase):
         self.assertEqual(self.module._vertical_scroll_remainder, 0.0)
         self.assertEqual(self.module._horizontal_scroll_remainder, 0.0)
 
+    def test_failed_discrete_scroll_is_not_replayed(self):
+        self.talon.actions.fail_scroll_call = 1
+        self.talon.actions.scroll_failure = RuntimeError("frame failed")
+
+        with self.assertRaisesRegex(RuntimeError, "frame failed"):
+            self.module.MainActions.mouse_scroll(2, -1, by_lines=True)
+
+        self.assertEqual(self.talon.actions.scroll_attempts, [(2, -1)])
+        self.assertEqual(self.talon.actions.next_calls, [])
+
     def test_non_wayland_scroll_uses_fallback_despite_native_capability(self):
         for environment in ({"XDG_SESSION_TYPE": "x11"}, {}):
             with (
@@ -268,6 +278,90 @@ class MouseForwarderTests(unittest.TestCase):
 
         self.assertEqual(self.talon.actions.native_button_down, [0])
         self.assertEqual(self.talon.actions.next_calls, [(0,), (0,)])
+
+    def _community_drag_toggle(self, held, button):
+        """Follow Community's toggle through main actions to a recording fallback."""
+        if button in held:
+            with patch.object(self.talon.actions, "next", held.remove):
+                self.module.MainActions.mouse_release(button)
+        else:
+            with patch.object(self.talon.actions, "next", held.add):
+                self.module.MainActions.mouse_drag(button)
+
+    def test_nested_fallback_toggle_keeps_release_with_its_owner(self):
+        held = set()
+        self.talon.actions.pointer_available = False
+        with patch.object(
+            self.talon.actions,
+            "next",
+            lambda button: self._community_drag_toggle(held, button),
+        ):
+            self.module.UserActions.mouse_drag_toggle(0)
+            self.assertEqual(held, {0})
+            self.assertEqual(self.module._fallback_held_buttons, {0})
+
+            self.talon.actions.pointer_available = True
+            self.module.UserActions.mouse_drag_toggle(0)
+
+        self.assertEqual(held, set())
+        self.assertEqual(self.module._fallback_held_buttons, set())
+        self.assertEqual(self.talon.actions.native_button_down, [])
+        self.assertEqual(self.talon.actions.native_button_up, [])
+
+    def test_nested_toggle_can_select_native_when_capability_appears(self):
+        held = set()
+        self.talon.actions.pointer_available = False
+
+        def delegate(button):
+            self.talon.actions.pointer_available = True
+            self._community_drag_toggle(held, button)
+
+        with patch.object(self.talon.actions, "next", delegate):
+            self.module.UserActions.mouse_drag_toggle(0)
+
+        self.assertEqual(held, set())
+        self.assertEqual(self.module._fallback_held_buttons, set())
+        self.assertEqual(self.talon.actions.native_button_down, [0])
+        self.module.MainActions.mouse_release(0)
+        self.assertEqual(self.talon.actions.native_button_up, [0])
+
+    def test_toggle_preflight_loss_records_nested_fallback_hold(self):
+        held = set()
+
+        def unavailable(button):
+            self.talon.actions.pointer_available = False
+            raise self.module.CapabilityUnavailable("pointer lost")
+
+        with (
+            patch.object(
+                self.talon.actions.user,
+                "wayland_pointer_button_toggle",
+                unavailable,
+                create=True,
+            ),
+            patch.object(
+                self.talon.actions,
+                "next",
+                lambda button: self._community_drag_toggle(held, button),
+            ),
+        ):
+            self.module.UserActions.mouse_drag_toggle(0)
+
+        self.assertEqual(held, {0})
+        self.assertEqual(self.module._fallback_held_buttons, {0})
+
+    def test_failed_native_toggle_is_not_replayed_through_fallback(self):
+        with patch.object(
+            self.talon.actions.user,
+            "wayland_pointer_button_toggle",
+            side_effect=RuntimeError("frame failed"),
+            create=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "frame failed"):
+                self.module.UserActions.mouse_drag_toggle(0)
+
+        self.assertEqual(self.talon.actions.next_calls, [])
+        self.assertEqual(self.module._fallback_held_buttons, set())
 
 
 if __name__ == "__main__":
