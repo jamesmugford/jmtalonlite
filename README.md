@@ -143,6 +143,30 @@ The incremental cleanup tasks and acceptance criteria are tracked in
 
 `plugins/wayland_runtime.py` owns lifecycle and scheduled event delivery;
 `plugins/wayland_scopes.py` owns Talon app/window scope providers and aliases.
+It exposes the raw Wayland app ID unchanged through Talon's `app.name` field.
+`plugins/wayland_app_aliases.py` extends Community's Linux app detection for
+Chromium (`chromium` and `chromium-browser`), Nautilus (`org.gnome.Nautilus`),
+and Evince (`org.gnome.Evince`) without editing Community files. It also groups
+Foot and Omarchy Terminal under a local terminal context that enables Community's
+shell, Git, kubectl, and Readline command sets.
+
+### Wayland application contexts
+
+The foreign-toplevel protocol exposes an application ID and window title, but
+not an executable path. Talon Community application definitions that rely on
+`app.exe`, or expect a different `app.name`, may therefore not activate
+automatically.
+
+`plugins/wayland_app_aliases.py` maps verified raw Wayland app IDs to existing
+Community application aliases. Contributions for additional observed mappings
+are welcome so Community contexts work across more Wayland applications.
+
+Mappings should be verified against real application windows. Helper processes,
+preview windows, and browser PWAs may use distinct IDs and should not
+automatically inherit their parent application's context. An alias enables an
+existing Community context; it does not provide actions that Community has not
+implemented for Linux.
+
 The protocol adapters and transport remain Talon-free in `plugins/wayland_backend/`.
 
 Run the unit and lightweight runtime tests with Talon's bundled Python:

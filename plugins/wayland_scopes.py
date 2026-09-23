@@ -39,11 +39,8 @@ class WaylandScopes:
         return self._installed
 
     def app_name(self) -> str:
-        """Return a display name derived from the active Wayland app ID."""
-        app_id = "" if self._active_window is None else self._active_window.app_id
-        if not app_id:
-            return ""
-        return app_id[0].upper() + app_id[1:]
+        """Return the active Wayland app ID unchanged, or an empty string."""
+        return "" if self._active_window is None else self._active_window.app_id
 
     def window_title(self) -> str:
         """Return the active Wayland window title or an empty string."""

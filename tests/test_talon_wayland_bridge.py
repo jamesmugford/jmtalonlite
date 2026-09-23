@@ -186,8 +186,21 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             self.assertIs(self.talon.cron.jobs[-1], job)
             self.assertEqual(job.delay, "0ms")
             job.callback()
-            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "Terminal")
+            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "terminal")
             self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Second")
+
+    def test_app_name_preserves_wayland_app_id_case(self):
+        with self.running_bridge() as bridge:
+            bridge._queue_active_window(
+                bridge._generation,
+                self.module.Window(1, "Files", "org.gnome.Nautilus", ()),
+            )
+            self.talon.cron.jobs[-1].callback()
+
+            self.assertEqual(
+                self.talon.scope.scopes["app"].func()["name"],
+                "org.gnome.Nautilus",
+            )
 
     def test_new_window_supersedes_delayed_clear_and_stale_job(self):
         with self.running_bridge() as bridge:
@@ -312,7 +325,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
 
             self.assertTrue(bridge.scopes.available())
             self.assertEqual(self.talon.scope.scopes["app"].func()["app"], {"code"})
-            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "Code")
+            self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "code")
             self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Editor")
             bridge.stop()
         self.assertIs(self.talon.scope.scopes["app"].func, original_app)
