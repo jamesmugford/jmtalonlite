@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Talon
+Comment=Voice control and dictation with Wayland input forwarding
+# Replace this with the absolute path to your installed wrapper script.
+Exec=/absolute/path/to/talon-launch
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Accessibility;

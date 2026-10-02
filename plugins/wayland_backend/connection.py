@@ -348,7 +348,7 @@ class WaylandConnection:
         # Talon's UI may need WAYLAND_DISPLAY="" to select XWayland. Keep the
         # transport's socket explicit without changing the process environment.
         display = self._bindings.Display(
-            os.environ.get("JMTALON_WAYLAND_DISPLAY") or None
+            os.environ.get("JMTALONLITE_WAYLAND_DISPLAY") or None
         )
         display.connect()
         self._display = display

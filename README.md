@@ -38,13 +38,46 @@ Talon 1.0.0 can crash in its Skia UI initialization when selecting Wayland.
 Launch it through XWayland while retaining the compositor socket for this shim:
 
 ```sh
-JMTALON_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:?Run from your Wayland desktop session}" \
+JMTALONLITE_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:?Run from your Wayland desktop session}" \
 WAYLAND_DISPLAY= /path/to/talon/talon
 ```
 
 This keeps Talon's UI on XWayland while the shim connects directly to Wayland
-for input and application contexts. `JMTALON_WAYLAND_DISPLAY` overrides only the
+for input and application contexts. `JMTALONLITE_WAYLAND_DISPLAY` overrides only the
 shim's connection; ordinary launches still use the standard Wayland environment.
+
+**Eye-tracking latency:** On the tested Hyprland/XWayland setup, eye tracking
+becomes noticeably slower when Talon's HUD or Settings window remains open on
+an inactive workspace. Bringing the window onto the active workspace restores
+responsiveness. Avoid leaving these windows open on another workspace; try
+closing them when not needed. The cause is under investigation.
+
+### Desktop launcher
+
+Example files are provided in [`examples/`](examples/):
+
+- [`talon-launch`](examples/talon-launch) preserves the Wayland socket and applies
+  the XWayland UI workaround.
+- [`talon.desktop`](examples/talon.desktop) adds Talon to your application menu.
+
+To install them from this repository:
+
+```sh
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+cp examples/talon-launch "$HOME/.local/bin/talon-launch"
+chmod +x "$HOME/.local/bin/talon-launch"
+cp examples/talon.desktop "$HOME/.local/share/applications/talon.desktop"
+```
+
+Edit the installed wrapper's `talon_binary` path to match your Talon installation.
+In the installed desktop file, replace `Exec=/absolute/path/to/talon-launch` with
+the absolute path to your wrapper, such as
+`Exec=/home/alex/.local/bin/talon-launch`. Quote the path if it contains spaces.
+Desktop files do not expand `$HOME` or `~` in `Exec=`.
+
+Launch Talon from your Wayland desktop's application menu. Installing these files
+does not restart a running Talon instance or enable autostart. If an existing
+launcher uses the same filename, copy it somewhere safe before replacing it.
 
 ## Current features
 

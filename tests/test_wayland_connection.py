@@ -151,7 +151,7 @@ class ConnectionRegistryTests(unittest.TestCase):
         for override in (None, "", "wayland-1", "/run/user/1000/wayland-2"):
             environment = {"WAYLAND_DISPLAY": "", "XDG_SESSION_TYPE": "wayland"}
             if override is not None:
-                environment["JMTALON_WAYLAND_DISPLAY"] = override
+                environment["JMTALONLITE_WAYLAND_DISPLAY"] = override
             with (
                 self.subTest(override=override),
                 patch.dict(os.environ, environment, clear=True),
