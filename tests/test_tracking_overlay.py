@@ -6,19 +6,38 @@ from unittest.mock import patch
 
 
 if __package__:
-    from .talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+    from .talon_fakes import (
+        FakeApp,
+        FakeContext,
+        FakeCron,
+        FakeModule,
+        FakeResourceContexts,
+        load_talon_module,
+    )
 else:
-    from talon_fakes import FakeApp, FakeContext, FakeModule, load_talon_module
+    from talon_fakes import (
+        FakeApp,
+        FakeContext,
+        FakeCron,
+        FakeModule,
+        FakeResourceContexts,
+        load_talon_module,
+    )
 
 
 class FakeTrackingSystem:
-    def __init__(self):
+    def __init__(self, contexts):
+        self.contexts = contexts
         self.callbacks = []
 
     def register(self, _event, callback):
+        if self.contexts.active.startswith("user."):
+            return
         self.callbacks.append(callback)
 
     def unregister(self, _event, callback):
+        if self.contexts.active.startswith("user."):
+            return
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
@@ -56,7 +75,10 @@ def make_overlay_environment(*, control1_enabled=False):
         tracking=types.SimpleNamespace(control1_enabled=lambda: control1_enabled),
     )
     talon.app = FakeApp()
-    talon.tracking_system = FakeTrackingSystem()
+    talon.cron = FakeCron()
+    contexts = FakeResourceContexts()
+    talon.scripting = types.SimpleNamespace(rctx=contexts)
+    talon.tracking_system = FakeTrackingSystem(contexts)
     talon.ui = types.SimpleNamespace(screens=lambda: ())
     canvas_module = types.ModuleType("talon.canvas")
     canvas_module.Canvas = types.SimpleNamespace(from_screen=lambda _screen: None)

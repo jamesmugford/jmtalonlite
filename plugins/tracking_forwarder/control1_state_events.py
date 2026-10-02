@@ -1,7 +1,7 @@
 """Event-driven hooks for Control Mouse enabled-state transitions."""
 
+import talon
 from talon import Context, Module, actions, app
-from talon.plugins import eye_mouse_2
 
 ctx = Context()
 mod = Module()
@@ -15,7 +15,7 @@ def _emit_control1_state(enabled: bool) -> None:
 
 def _install_menu_hook() -> bool:
     """Wrap Talon's Control Mouse menu callback exactly once."""
-    item = getattr(eye_mouse_2, "control1_item", None)
+    item = getattr(talon.plugins.eye_mouse_2, "control1_item", None)
     if item is None:
         return False
 

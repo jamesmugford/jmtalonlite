@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# Adjust this path to match your Talon installation.
+talon_binary="$HOME/.local/opt/talon-1.0/talon"
+
+# Preserve the compositor socket for the shim before selecting XWayland UI.
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    export JMTALONLITE_WAYLAND_DISPLAY="${JMTALONLITE_WAYLAND_DISPLAY:-$WAYLAND_DISPLAY}"
+    export WAYLAND_DISPLAY=
+fi
+
+exec "$talon_binary" "$@"

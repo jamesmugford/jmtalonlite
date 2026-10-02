@@ -12,7 +12,12 @@
     "commit": "87cc8a8728a923fc57938faa81ba0e74f34ecdc7"
   },
   "bundle": {
-    "target": "CPython 3.13, CFFI 1.17.1, Linux x86-64",
+    "targets": {
+      "cpython-314t-x86_64-linux-gnu": {
+        "directory": "cp314-cp314t-linux_x86_64",
+        "cffi": "2.1.0"
+      }
+    },
     "minimum_glibc": "2.34",
     "maximum_glibc": "2.34",
     "extension_runpath": "$ORIGIN/../pywayland.libs",

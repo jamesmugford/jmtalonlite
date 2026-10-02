@@ -14,6 +14,9 @@
 - [x] Clarify naming, consolidate shared test helpers, and document requirements.
 - [x] Preserve raw Wayland app IDs and map verified IDs to Community contexts.
 - [x] Remove universal tab overrides in favor of normal app-specific dispatch.
+- [x] Support Talon 1.0's Python 3.14t runtime and tracking startup order.
+- [x] Restore Legacy Control Mouse gaze subscriptions and serialize gaze delivery
+  under Talon 1.0.
 
 ## Planned
 

@@ -19,9 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "third_party" / "manifest.json"
 PROTOCOL_DIR = ROOT / "third_party" / "protocols"
-DESTINATION = (
-    ROOT / ".vendor" / "pywayland" / "cp313-cp313-linux_x86_64"
-)
+VENDOR_ROOT = ROOT / ".vendor" / "pywayland"
 CORE_PROTOCOL = "wayland.xml"
 
 WHEEL_URL = (
@@ -109,42 +107,43 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
-def _validate_python(talon_python: Path) -> Path:
+def _validate_python(talon_python: Path, manifest: dict) -> tuple[Path, Path]:
     probe = subprocess.run(
         [
             str(talon_python),
             "-c",
             "import cffi, json, platform, sys, sysconfig; "
-            "print(json.dumps([sys.implementation.cache_tag, platform.machine(), "
+            "print(json.dumps([sysconfig.get_config_var('SOABI'), platform.machine(), "
             "platform.system(), platform.libc_ver(), cffi.__version__, "
-            "sysconfig.get_path('include')]))",
+            "sysconfig.get_path('include'), sys.prefix]))",
         ],
         check=True,
         capture_output=True,
         text=True,
     )
-    cache_tag, machine, system, libc, cffi_version, include = json.loads(
+    soabi, machine, system, libc, cffi_version, include, prefix = json.loads(
         probe.stdout
     )
+    target = manifest["bundle"]["targets"].get(soabi)
     if (
-        cache_tag != "cpython-313"
+        target is None
         or machine != "x86_64"
         or system != "Linux"
         or libc[0] != "glibc"
         or tuple(map(int, libc[1].split("."))) < (2, 34)
-        or cffi_version != "1.17.1"
+        or cffi_version != target["cffi"]
     ):
         raise RuntimeError(
-            "The vendor target requires CPython 3.13, CFFI 1.17.1, Linux "
+            "The vendor target requires a manifest-listed Python/CFFI ABI, Linux "
             "x86-64, and glibc 2.34 or newer; "
             f"target reported {probe.stdout.strip()}"
         )
     include_path = Path(include)
     if not (include_path / "Python.h").is_file():
-        include_path = Path.home() / ".talon" / ".venv" / "include"
+        include_path = Path(prefix) / "include"
     if not (include_path / "Python.h").is_file():
         raise RuntimeError("Talon Python headers are not installed")
-    return include_path
+    return include_path, VENDOR_ROOT / target["directory"]
 
 
 def _trim_runtime_bundle(site: Path) -> None:
@@ -235,8 +234,8 @@ def _validate_elf(site: Path, extension: Path, manifest: dict) -> None:
 
 
 def build(talon_python: Path) -> None:
-    include_path = _validate_python(talon_python)
     manifest = json.loads(MANIFEST.read_text())
+    include_path, destination = _validate_python(talon_python, manifest)
     for filename, expected_hash in manifest["protocols"].items():
         actual_hash = _sha256(PROTOCOL_DIR / filename)
         if actual_hash != expected_hash:
@@ -255,6 +254,10 @@ def build(talon_python: Path) -> None:
         _download(SOURCE_URL, source, manifest["pywayland"]["source_sha256"])
         with zipfile.ZipFile(wheel) as archive:
             archive.extractall(site)
+        # The wheel supplies Python sources and private libraries; rebuild its
+        # extension for the selected Talon ABI rather than retaining a second ABI.
+        for old_extension in (site / "pywayland").glob("_ffi*.so"):
+            old_extension.unlink()
         with tarfile.open(source) as archive:
             archive.extractall(temp, filter="data")
 
@@ -319,12 +322,12 @@ def build(talon_python: Path) -> None:
         )
         _run([str(talon_python), "-c", verify], cwd=ROOT, env=scan_env)
 
-        if DESTINATION.exists():
-            shutil.rmtree(DESTINATION)
-        DESTINATION.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(site, DESTINATION)
+        if destination.exists():
+            shutil.rmtree(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(site, destination)
 
-    print(f"Rebuilt {DESTINATION}")
+    print(f"Rebuilt {destination}")
 
 
 def main() -> None:

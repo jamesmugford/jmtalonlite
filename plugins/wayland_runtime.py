@@ -7,8 +7,8 @@ from collections.abc import Callable
 from itertools import count
 from typing import Any
 
+import talon
 from talon import Context, Module, actions, app, cron, registry, ui
-from talon.plugins import eye_mouse
 
 from .wayland_backend.desktop import WaylandDesktop
 from .wayland_backend.errors import CapabilityUnavailable
@@ -222,7 +222,7 @@ class _TalonWaylandBridge:
         refresh_hover: bool = False,
     ) -> None:
         """Move within Talon's current eye-mouse screen through its wl_output."""
-        screen = eye_mouse.main_screen or ui.main_screen()
+        screen = talon.plugins.eye_mouse.main_screen or ui.main_screen()
         if screen is None:
             raise CapabilityUnavailable("Talon main screen is not available")
         rect = screen.rect
