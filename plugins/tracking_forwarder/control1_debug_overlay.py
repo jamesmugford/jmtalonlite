@@ -2,7 +2,8 @@
 
 import sys
 
-from talon import Context, Module, actions, app, tracking_system, ui
+import talon
+from talon import Context, Module, actions, app, ui
 
 _RELOAD_STATE_KEY = "_jm_talon_lite_control1_overlay_state"
 _previous_enabled, _previous_callbacks, _previous_entries = getattr(
@@ -15,7 +16,10 @@ if _previous_callbacks or _previous_entries:
     _previous_remaining = []
     for _previous_callback in _previous_callbacks:
         try:
-            tracking_system.unregister("gaze", _previous_callback)
+            if hasattr(_previous_callback, "stop"):
+                _previous_callback.stop()
+            with talon.scripting.rctx.main.enter():
+                talon.tracking_system.unregister("gaze", _previous_callback)
         except Exception as exc:
             _previous_failures.append(("gaze callback", exc))
             _previous_failed_callbacks.append(_previous_callback)
@@ -48,16 +52,17 @@ if _previous_callbacks or _previous_entries:
 setattr(sys, _RELOAD_STATE_KEY, (_previous_enabled, (), ()))
 
 from talon.canvas import Canvas  # noqa: E402
-from talon.plugins import eye_mouse  # noqa: E402
 
 from ..wayland_backend.connection import run_cleanup_steps  # noqa: E402
 from ..wayland_backend.geometry import local_point  # noqa: E402
+from .gaze_dispatch import GazeDispatch  # noqa: E402
 
 ctx = Context()
 mod = Module()
 
 _overlay_enabled = _previous_enabled
 _gaze_registered = False
+eye_mouse = talon.plugins.eye_mouse if _previous_enabled else None
 _dot_pos = None
 _canvas_entries = []
 
@@ -161,10 +166,14 @@ def _create_canvases() -> None:
 
 def _register_gaze() -> None:
     """Register this generation's gaze callback exactly once."""
-    global _gaze_registered
+    global _gaze_registered, eye_mouse
     if _gaze_registered:
         return
-    tracking_system.register("gaze", _on_gaze)
+    eye_mouse = talon.plugins.eye_mouse
+    # Talon 1.0 requires a process owner for gaze; teardown remains explicit.
+    with talon.scripting.rctx.main.enter():
+        talon.tracking_system.register("gaze", _on_gaze)
+    _on_gaze.start()
     _gaze_registered = True
     _publish_reload_state()
 
@@ -182,7 +191,9 @@ def _unregister_gaze() -> None:
     global _gaze_registered
     if not _gaze_registered:
         return
-    tracking_system.unregister("gaze", _on_gaze)
+    _on_gaze.stop()
+    with talon.scripting.rctx.main.enter():
+        talon.tracking_system.unregister("gaze", _on_gaze)
     _gaze_registered = False
     _publish_reload_state()
 
@@ -209,7 +220,7 @@ def _sync_overlay() -> None:
     _register_gaze()
 
 
-def _on_gaze(*_args) -> None:
+def _update_gaze() -> None:
     """Update every canvas from the latest enabled Control Mouse sample."""
     global _dot_pos
     if not _overlay_enabled:
@@ -227,6 +238,9 @@ def _on_gaze(*_args) -> None:
 
     for canvas, _draw_cb in _canvas_entries:
         canvas.freeze()
+
+
+_on_gaze = GazeDispatch(_update_gaze, talon.cron)
 
 
 def _on_screen_change(_screens) -> None:

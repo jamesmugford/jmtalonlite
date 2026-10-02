@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import math
+import os
 import selectors
 import socket
 import threading
@@ -344,7 +345,11 @@ class WaylandConnection:
     def _connect(self) -> None:
         """Connect the display and request two initial registry round trips."""
         assert self._bindings is not None
-        display = self._bindings.Display()
+        # Talon's UI may need WAYLAND_DISPLAY="" to select XWayland. Keep the
+        # transport's socket explicit without changing the process environment.
+        display = self._bindings.Display(
+            os.environ.get("JMTALON_WAYLAND_DISPLAY") or None
+        )
         display.connect()
         self._display = display
         registry = display.get_registry()

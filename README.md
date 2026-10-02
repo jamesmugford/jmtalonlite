@@ -29,9 +29,22 @@ Input forwarding and window tracking are event-driven.
 
 ## Talon support
 
-The latest supported version is `0.4.0-950-bd10`. Support for
-`0.4.0-1050-3c4a` is planned, but Talon's UI layer currently crashes under Wayland.
-If you have it working, please let me know.
+This project targets Talon 1.0 and later, currently tested with 1.0.0. The bundled
+backend requires free-threaded CPython 3.14t. Future Talon releases that change
+the Python ABI may require an updated bundle. Talon versions before 1.0 are no
+longer supported.
+
+Talon 1.0.0 can crash in its Skia UI initialization when selecting Wayland.
+Launch it through XWayland while retaining the compositor socket for this shim:
+
+```sh
+JMTALON_WAYLAND_DISPLAY="${WAYLAND_DISPLAY:?Run from your Wayland desktop session}" \
+WAYLAND_DISPLAY= /path/to/talon/talon
+```
+
+This keeps Talon's UI on XWayland while the shim connects directly to Wayland
+for input and application contexts. `JMTALON_WAYLAND_DISPLAY` overrides only the
+shim's connection; ordinary launches still use the standard Wayland environment.
 
 ## Current features
 
@@ -84,8 +97,8 @@ unavailable.
 git clone https://github.com/jamesmugford/jmtalonlite $HOME/.talon/user/jmtalonlite
 ```
 
-The bundled native backend requires Linux x86-64, Talon's CPython 3.13, glibc 2.34
-or newer, and `libxkbcommon.so.0` (normally installed on Wayland desktops).
+The bundled native backend requires Linux x86-64, Talon's CPython 3.14t,
+glibc 2.34 or newer, and `libxkbcommon.so.0` (normally installed on Wayland desktops).
 PyWayland and the protocol bindings are bundled; no separate input daemon or
 uinput setup is needed. The command-layer dependency is described above.
 Restart Talon after cloning, and once when updating across the historical

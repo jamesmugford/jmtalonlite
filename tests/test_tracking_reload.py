@@ -8,9 +8,21 @@ from unittest.mock import patch
 
 
 if __package__:
-    from .talon_fakes import FakeApp, FakeModule, load_talon_module
+    from .talon_fakes import (
+        FakeApp,
+        FakeCron,
+        FakeModule,
+        FakeResourceContexts,
+        load_talon_module,
+    )
 else:
-    from talon_fakes import FakeApp, FakeModule, load_talon_module
+    from talon_fakes import (
+        FakeApp,
+        FakeCron,
+        FakeModule,
+        FakeResourceContexts,
+        load_talon_module,
+    )
 
 
 class FakeSettings:
@@ -22,16 +34,21 @@ class FakeSettings:
 
 
 class FakeTrackingSystem:
-    def __init__(self):
+    def __init__(self, contexts):
+        self.contexts = contexts
         self.callbacks = []
         self.register_calls = []
         self.unregister_calls = []
 
     def register(self, _event, callback):
+        if self.contexts.active.startswith("user."):
+            return
         self.register_calls.append(callback)
         self.callbacks.append(callback)
 
     def unregister(self, _event, callback):
+        if self.contexts.active.startswith("user."):
+            return
         self.unregister_calls.append(callback)
         if callback in self.callbacks:
             self.callbacks.remove(callback)
@@ -50,8 +67,11 @@ def make_talon(*, settings=None):
         ),
     )
     talon.app = FakeApp()
+    talon.cron = FakeCron()
     talon.settings = FakeSettings(settings)
-    talon.tracking_system = FakeTrackingSystem()
+    contexts = FakeResourceContexts()
+    talon.scripting = types.SimpleNamespace(rctx=contexts)
+    talon.tracking_system = FakeTrackingSystem(contexts)
     plugins_module = types.ModuleType("talon.plugins")
     plugins_module.eye_mouse = types.SimpleNamespace(
         mouse=types.SimpleNamespace(xy_hist=[], eye_hist=[], delta_hist=[])
@@ -170,6 +190,22 @@ class TrackingReloadTests(unittest.TestCase):
                     talon.tracking_system.unregister_calls, [loaded._on_gaze]
                 )
 
+    def test_gaze_registration_uses_process_owner_and_restores_script_context(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix):
+                talon, plugins = make_talon()
+                loaded = load_tracking_module(
+                    f"{feature}.py", talon=talon, plugins_module=plugins
+                )
+                try:
+                    loaded._register_gaze()
+                    self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
+                    self.assertEqual(talon.scripting.rctx.active, "user.test")
+                finally:
+                    loaded._unregister_gaze()
+                self.assertEqual(talon.tracking_system.callbacks, [])
+                self.assertEqual(talon.scripting.rctx.active, "user.test")
+
     def test_failed_stop_preserves_disabled_intent_and_cleanup_handle(self):
         for feature, prefix in self.features:
             with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
@@ -263,7 +299,9 @@ class TrackingReloadTests(unittest.TestCase):
                 talon=talon,
                 plugins_module=plugins_module,
             )
+            loaded._register_gaze()
             loaded._on_gaze()
+            talon.cron.jobs[-1].callback()
             self.assertEqual(
                 calls,
                 [((1920.0, 1080.0), {"refresh_hover": True})],
@@ -278,6 +316,7 @@ class TrackingReloadTests(unittest.TestCase):
 
             talon.actions.user.wayland_pointer_move_main_screen = unavailable
             loaded._on_gaze()
+            talon.cron.jobs[-1].callback()
             self.assertEqual(fallback_calls, [(1920.0, 1080.0)])
         finally:
             if loaded is not None:
@@ -379,7 +418,7 @@ class TrackingReloadTests(unittest.TestCase):
         setattr(sys, callback_key, retained_callback)
         setattr(sys, state_key, True)
         try:
-            with self.assertRaises(ImportError):
+            with self.assertRaises(AttributeError):
                 load_tracking_module(
                     "control1_pointer_forwarder.py",
                     talon=talon,
@@ -397,49 +436,29 @@ class TrackingReloadTests(unittest.TestCase):
             if saved_state is not None:
                 setattr(sys, state_key, saved_state)
 
-    def test_failed_first_pointer_import_does_not_suppress_autostart_retry(self):
-        callback_key = "_jm_talon_lite_control1_pointer_callback"
-        state_key = "_jm_talon_lite_control1_pointer_enabled"
-        saved_callback = getattr(sys, callback_key, None)
-        saved_state = getattr(sys, state_key, None)
-        for retained_key in (callback_key, state_key):
-            if hasattr(sys, retained_key):
-                delattr(sys, retained_key)
-        talon, plugins_module = make_talon(
-            settings={"user.control1_pointer_forwarder_autostart": True}
-        )
-        loaded = None
-        try:
-            with self.assertRaises(ImportError):
-                load_tracking_module(
-                    "control1_pointer_forwarder.py",
+    def test_tracking_dependencies_can_appear_after_script_load(self):
+        for feature, prefix in self.features:
+            with self.subTest(feature=feature), isolated_tracking_state(prefix) as keys:
+                talon, plugins = make_talon(
+                    settings={f"user.{feature}_autostart": True}
+                )
+                tracking = talon.tracking_system
+                del talon.tracking_system
+                loaded = load_tracking_module(
+                    f"{feature}.py",
                     talon=talon,
                     plugins_module=types.ModuleType("talon.plugins"),
                 )
-            self.assertFalse(hasattr(sys, state_key))
-
-            loaded = load_tracking_module(
-                "control1_pointer_forwarder.py",
-                talon=talon,
-                plugins_module=plugins_module,
-            )
-            talon.actions.user.control1_pointer_forwarder_start = (
-                loaded.Actions.control1_pointer_forwarder_start
-            )
-            loaded._on_ready()
-
-            self.assertTrue(loaded._registered)
-            self.assertEqual(talon.tracking_system.callbacks, [loaded._on_gaze])
-        finally:
-            if loaded is not None:
-                loaded._unregister_gaze()
-            for retained_key in (callback_key, state_key):
-                if hasattr(sys, retained_key):
-                    delattr(sys, retained_key)
-            if saved_callback is not None:
-                setattr(sys, callback_key, saved_callback)
-            if saved_state is not None:
-                setattr(sys, state_key, saved_state)
+                self.assertFalse(hasattr(sys, keys[1]))
+                talon.tracking_system = tracking
+                talon.plugins = plugins
+                try:
+                    loaded._on_ready()
+                    loaded._on_ready()
+                    self.assertTrue(loaded._registered)
+                    self.assertEqual(tracking.callbacks, [loaded._on_gaze])
+                finally:
+                    loaded._unregister_gaze()
 
 
 if __name__ == "__main__":

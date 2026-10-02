@@ -124,6 +124,7 @@ def load_bridge_module():
     scopes_module = importlib.util.module_from_spec(scopes_spec)
     plugins_module = types.ModuleType("talon.plugins")
     plugins_module.eye_mouse = types.SimpleNamespace(main_screen=main_screen)
+    talon.plugins = plugins_module
     talon.eye_mouse = plugins_module.eye_mouse
     old_bridge = getattr(sys, "_jm_talon_lite_wayland_bridge", None)
     if old_bridge is not None:

@@ -2,7 +2,8 @@
 
 import sys
 
-from talon import Module, actions, app, settings, tracking_system
+import talon
+from talon import Module, actions, app, settings
 
 _CALLBACK_KEY = "_jm_talon_lite_control1_gaze_logger_callback"
 _STATE_KEY = "_jm_talon_lite_control1_gaze_logger_enabled"
@@ -10,13 +11,15 @@ _STATE_KEY = "_jm_talon_lite_control1_gaze_logger_enabled"
 # Retire the exact previous callback before importing optional dependencies.
 _retained_callback = getattr(sys, _CALLBACK_KEY, None)
 if _retained_callback is not None:
-    tracking_system.unregister("gaze", _retained_callback)
+    if hasattr(_retained_callback, "stop"):
+        _retained_callback.stop()
+    with talon.scripting.rctx.main.enter():
+        talon.tracking_system.unregister("gaze", _retained_callback)
     if getattr(sys, _CALLBACK_KEY, None) is _retained_callback:
         delattr(sys, _CALLBACK_KEY)
 
-from talon.plugins import eye_mouse  # noqa: E402
-
 from .gaze_sample import GazeSample, format_gaze_sample  # noqa: E402
+from .gaze_dispatch import GazeDispatch  # noqa: E402
 
 mod = Module()
 mod.setting(
@@ -30,7 +33,7 @@ _registered = False
 
 def _control1_sample_line() -> str:
     """Return a formatted line for the latest Control Mouse sample."""
-    mouse = eye_mouse.mouse
+    mouse = talon.plugins.eye_mouse.mouse
     if not mouse.xy_hist or not mouse.eye_hist:
         return format_gaze_sample(None)
 
@@ -50,11 +53,14 @@ def _control1_sample_line() -> str:
     )
 
 
-def _on_gaze(*_args) -> None:
+def _log_gaze() -> None:
     """Log the latest sample while Control Mouse is enabled."""
     if not actions.tracking.control1_enabled():
         return
     print(_control1_sample_line())
+
+
+_on_gaze = GazeDispatch(_log_gaze, talon.cron)
 
 
 def _register_gaze() -> None:
@@ -63,7 +69,10 @@ def _register_gaze() -> None:
     setattr(sys, _STATE_KEY, True)
     if _registered:
         return
-    tracking_system.register("gaze", _on_gaze)
+    # Match the pointer forwarder's explicit process-owned gaze lifetime.
+    with talon.scripting.rctx.main.enter():
+        talon.tracking_system.register("gaze", _on_gaze)
+    _on_gaze.start()
     setattr(sys, _CALLBACK_KEY, _on_gaze)
     _registered = True
 
@@ -74,7 +83,9 @@ def _unregister_gaze() -> None:
     setattr(sys, _STATE_KEY, False)
     if not _registered:
         return
-    tracking_system.unregister("gaze", _on_gaze)
+    _on_gaze.stop()
+    with talon.scripting.rctx.main.enter():
+        talon.tracking_system.unregister("gaze", _on_gaze)
     if getattr(sys, _CALLBACK_KEY, None) is _on_gaze:
         delattr(sys, _CALLBACK_KEY)
     _registered = False

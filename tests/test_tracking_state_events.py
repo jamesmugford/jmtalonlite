@@ -103,6 +103,7 @@ class ControlMouseNotificationTests(unittest.TestCase):
         self.assertEqual(self.notifications, [True])
         self.assertEqual(self.talon.tracking_system.callbacks, [self.overlay._on_gaze])
         self.overlay._on_gaze()
+        self.talon.cron.jobs[-1].callback()
         self.assertEqual(self.overlay._dot_pos, (20, 30))
         freezes = self.canvas.freeze_count
 

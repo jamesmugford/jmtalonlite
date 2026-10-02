@@ -1,12 +1,13 @@
 import errno
 import math
+import os
 import socket
 import sys
 import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 PLUGINS = Path(__file__).resolve().parents[1] / "plugins"
 sys.path.insert(0, str(PLUGINS))
@@ -145,6 +146,26 @@ class ConnectionRegistryTests(unittest.TestCase):
     def test_registration_rejects_duplicate_protocols(self):
         with self.assertRaises(ValueError):
             self.connection.register(FakeAdapter("first"))
+
+    def test_display_override_keeps_talon_ui_environment_unchanged(self):
+        for override in (None, "", "wayland-1", "/run/user/1000/wayland-2"):
+            environment = {"WAYLAND_DISPLAY": "", "XDG_SESSION_TYPE": "wayland"}
+            if override is not None:
+                environment["JMTALON_WAYLAND_DISPLAY"] = override
+            with (
+                self.subTest(override=override),
+                patch.dict(os.environ, environment, clear=True),
+            ):
+                display = Mock()
+                display.get_registry.return_value = SimpleNamespace(dispatcher={})
+                display.sync.return_value = SimpleNamespace(dispatcher={})
+                factory = Mock(return_value=display)
+                connection = WaylandConnection()
+                connection._bindings = WaylandBindings(factory, None, None, {})
+                connection._connect()
+                factory.assert_called_once_with(override or None)
+                display.connect.assert_called_once_with()
+                self.assertEqual(dict(os.environ), environment)
 
 
 class ConnectionMailboxTests(unittest.TestCase):
