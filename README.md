@@ -50,7 +50,7 @@ shim's connection; ordinary launches still use the standard Wayland environment.
 becomes noticeably slower when Talon's HUD or Settings window remains open on
 an inactive workspace. Bringing the window onto the active workspace restores
 responsiveness. Avoid leaving these windows open on another workspace; try
-closing them when not needed. The cause is under investigation.
+closing them when not needed.
 
 ### Desktop launcher
 
