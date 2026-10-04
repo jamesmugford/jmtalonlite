@@ -88,7 +88,7 @@ launcher uses the same filename, copy it somewhere safe before replacing it.
 - Mouse button and scrolling commands such as `touch`, `righty`, `drag`, and
   `wheel up`, including continuous fractional-line scrolling
 - Active Wayland application and window-title contexts
-- Optional compositor voice-command app layers (currently Hyprland, but more are to be added)
+- Optional compositor voice-command layers for Hyprland, Sway, and niri
 
 ## Scope
 
@@ -109,8 +109,12 @@ compositor and its version/configuration. The compositor targets are:
 - Sway
 - Wayfire
 
-The optional `apps/hyprland/` voice-command layer requires the Lua-capable
-`hyprctl eval` API. It is separate from the shared native Wayland forwarding.
+Optional command layers live under `apps/`: Hyprland uses the Lua-capable
+`hyprctl eval` API, Sway uses `swaymsg`, and niri uses `niri msg action`. Sway and
+niri closely follow Community's i3 spoken forms; see the
+[command reference and setup notes](docs/compositor-commands.md) for equivalents,
+shortcut settings, and verification status. These command layers are separate
+from shared native Wayland input forwarding.
 
 ## Wayland protocols
 
