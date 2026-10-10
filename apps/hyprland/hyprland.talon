@@ -1,12 +1,10 @@
 # Hyprland commands auto-enable when Talon starts under Hyprland.
-# Spoken forms mirror Talon Community's i3 vocabulary where Hyprland has an equivalent.
+# Reference: Community apps/i3wm/i3wm.talon; desktop commands use user.desktop().
+# Adapted under the MIT license in third_party/community-LICENSE.txt.
 os: linux
 tag: user.hyprland
 -
-port <number_small>: user.hyprland_switch_to_workspace(number_small)
-(port flip | flipper): user.hyprland_switch_to_workspace("previous")
-port right: user.hyprland_switch_to_workspace("e+1")
-port left: user.hyprland_switch_to_workspace("e-1")
+desk flip | flipper: user.hyprland_switch_to_workspace("previous")
 
 (win | window) left: user.hyprland_focus("left")
 (win | window) right: user.hyprland_focus("right")
@@ -19,14 +17,16 @@ reload (hyper land | hypr land) config: user.hyprland_reload()
 (full screen | scuba): user.hyprland_fullscreen()
 toggle floating: user.hyprland_float()
 focus floating: user.hyprland_focus_mode_toggle()
-center window: user.hyprland_center()
+(win | window) center: user.hyprland_center()
 
-grow window: user.hyprland_resize_window(1)
-shrink window: user.hyprland_resize_window(-1)
+(win | window) grow [<number>] [<user.i3wm_resize_dirs>]:
+    user.hyprland_resize_window("grow", number or 4, i3wm_resize_dirs or "height width")
+(win | window) shrink [<number>] [<user.i3wm_resize_dirs>]:
+    user.hyprland_resize_window("shrink", number or 4, i3wm_resize_dirs or "height width")
 
 (shuffle | move (win | window) [to] port) <number_small>:
     user.hyprland_move_to_workspace(number_small)
-(shuffle | move (win | window) [to] last port):
+(shuffle | move (win | window) [to]) last port:
     user.hyprland_move_to_workspace("previous")
 (shuffle | move) flipper: user.hyprland_move_to_workspace("previous")
 (shuffle | move (win | window) left): user.hyprland_move("left")

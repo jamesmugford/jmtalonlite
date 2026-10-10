@@ -19,7 +19,7 @@ to use the native forwarding layer.
 This takes a progressive-enhancement approach, keeping core features
 compositor-agnostic while allowing optional compositor-specific app layers.
 
-Shared compositor actions such as `grow window` and `shrink window` reuse Talon
+Shared compositor actions such as `window grow` and `window shrink` reuse Talon
 Community's i3 vocabulary where practical; app layers are not intended as full
 i3 ports. Hyprland is simply the first optional implementation, not a preferred
 or exclusive compositor. Additional integrations are expected under `apps/` as

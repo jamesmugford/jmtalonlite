@@ -121,13 +121,38 @@ def _workspace_selector(which: Union[str, int]) -> str:
     return _lua_string(str(which))
 
 
-def _resize_active_window(direction: int) -> None:
-    direction = 1 if direction > 0 else -1
-    pixels = direction * 100
+def _focus_workspace(which: Union[str, int]) -> None:
+    workspace = _workspace_selector(which)
+    _dispatch(f"hl.dsp.focus({{ workspace = {workspace} }})")
+
+
+def _move_to_workspace(which: Union[str, int]) -> None:
+    workspace = _workspace_selector(which)
+    _dispatch(f"hl.dsp.window.move({{ workspace = {workspace}, follow = false }})")
+
+
+def _resize_active_window(operation: str, amount: int, directions: str) -> None:
+    requested = directions.split()
+    axes = {
+        "left": "width",
+        "right": "width",
+        "width": "width",
+        "up": "height",
+        "down": "height",
+        "height": "height",
+    }
+    if operation not in {"grow", "shrink"} or amount <= 0:
+        raise ValueError("Resize requires grow/shrink and a positive amount")
+    if not requested or any(direction not in axes for direction in requested):
+        raise ValueError("Unknown Hyprland resize direction")
+    pixels = (1 if operation == "grow" else -1) * 10 * amount
+    selected = {axes[direction] for direction in requested}
+    x = pixels if "width" in selected else 0
+    y = pixels if "height" in selected else 0
     _eval(
         "local window = hl.get_active_window(); "
         "if window then "
-        f"hl.dispatch(hl.dsp.window.resize({{ x = {pixels}, y = {pixels}, relative = true }})); "
+        f"hl.dispatch(hl.dsp.window.resize({{ x = {x}, y = {y}, relative = true }})); "
         "if window.floating then hl.dispatch(hl.dsp.window.center()) end "
         "end"
     )
@@ -183,6 +208,27 @@ class AppActions:
         _dispatch("hl.dsp.window.close()")
 
 
+@ctx.action_class("user")
+class UserActions:
+    def desktop(number: int):
+        _focus_workspace(number)
+
+    def desktop_next():
+        _focus_workspace("e+1")
+
+    def desktop_last():
+        _focus_workspace("e-1")
+
+    def window_move_desktop(desktop_number: int):
+        _move_to_workspace(desktop_number)
+
+    def window_move_desktop_left():
+        _move_to_workspace("e-1")
+
+    def window_move_desktop_right():
+        _move_to_workspace("e+1")
+
+
 @mod.action_class
 class Actions:
     def hyprland_reload():
@@ -204,13 +250,11 @@ class Actions:
 
     def hyprland_switch_to_workspace(which: Union[str, int]):
         """Focus the specified workspace."""
-        workspace = _workspace_selector(which)
-        _dispatch(f"hl.dsp.focus({{ workspace = {workspace} }})")
+        _focus_workspace(which)
 
     def hyprland_move_to_workspace(which: Union[str, int]):
         """Move the active window to the specified workspace."""
-        workspace = _workspace_selector(which)
-        _dispatch(f"hl.dsp.window.move({{ workspace = {workspace}, follow = false }})")
+        _move_to_workspace(which)
 
     def hyprland_move_to_scratchpad():
         """Move the active window to the scratchpad."""
@@ -234,9 +278,9 @@ class Actions:
         """Center the active floating window."""
         _dispatch("hl.dsp.window.center()")
 
-    def hyprland_resize_window(direction: int):
-        """Grow or shrink the active window."""
-        _resize_active_window(direction)
+    def hyprland_resize_window(operation: str, amount: int, directions: str):
+        """Resize in ten-pixel steps; directional words select width or height."""
+        _resize_active_window(operation, amount, directions)
 
 
 def _on_ready() -> None:

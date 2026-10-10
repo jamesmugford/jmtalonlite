@@ -66,6 +66,20 @@ Current Community forms are used directly. The deprecated `port <number>`,
 `grow window`, and `center window` aliases are not copied. The still-current
 `move window to port <number>` and `shuffle <number>` forms are included.
 
+## Hyprland command alignment
+
+Hyprland also uses Community's current `desk` commands through standard desktop
+action overrides, plus `desk flip` / `flipper`, `window center`, and
+`window grow/shrink [amount] [directions]`. Deprecated standalone `port`,
+`center window`, `grow window`, and `shrink window` forms are removed. Community's
+still-current move-to-port forms remain available.
+
+Resize uses ten-pixel steps, defaulting to four and `height width`. Directional
+words select the corresponding axis once, rather than anchoring an edge. Floating
+windows are recentered after resizing. Tiled resizing still delegates to
+Hyprland's native layout behavior: the scrolling viewport clamp and Dwindle
+split-ratio sign issues are not resolved by this vocabulary update.
+
 ## Sway-specific forms
 
 Sway retains the direct i3 equivalents:

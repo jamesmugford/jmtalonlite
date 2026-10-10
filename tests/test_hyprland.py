@@ -143,19 +143,67 @@ class HyprlandTests(unittest.TestCase):
 
     def test_resize_recenters_only_floating_windows(self):
         with patch.object(self.hyprland, "_eval") as evaluate:
-            self.hyprland.Actions.hyprland_resize_window(1)
+            self.hyprland.Actions.hyprland_resize_window("grow", 4, "height width")
 
         code = evaluate.call_args.args[0]
         self.assertIn(
-            "hl.dsp.window.resize({ x = 100, y = 100, relative = true })", code
+            "hl.dsp.window.resize({ x = 40, y = 40, relative = true })", code
         )
         self.assertIn("if window.floating then", code)
         self.assertIn("hl.dsp.window.center()", code)
 
         with patch.object(self.hyprland, "_eval") as evaluate:
-            self.hyprland.Actions.hyprland_resize_window(-1)
+            self.hyprland.Actions.hyprland_resize_window("shrink", 4, "height width")
 
-        self.assertIn("x = -100, y = -100", evaluate.call_args.args[0])
+        self.assertIn("x = -40, y = -40", evaluate.call_args.args[0])
+
+    def test_resize_selects_each_axis_once(self):
+        cases = (
+            ("grow", 2, "left right width", "x = 20, y = 0"),
+            ("shrink", 3, "up down height", "x = 0, y = -30"),
+            ("grow", 1, "left down", "x = 10, y = 10"),
+        )
+        for operation, amount, directions, expected in cases:
+            with self.subTest(directions=directions):
+                with patch.object(self.hyprland, "_eval") as evaluate:
+                    self.hyprland.Actions.hyprland_resize_window(
+                        operation, amount, directions
+                    )
+                evaluate.assert_called_once()
+                self.assertIn(expected, evaluate.call_args.args[0])
+
+    def test_invalid_resize_does_not_dispatch(self):
+        for arguments in (
+            ("toggle", 4, "width"),
+            ("grow", 0, "width"),
+            ("grow", 4, ""),
+            ("grow", 4, "diagonal"),
+        ):
+            with self.subTest(arguments=arguments):
+                with patch.object(self.hyprland, "_eval") as evaluate:
+                    with self.assertRaises(ValueError):
+                        self.hyprland.Actions.hyprland_resize_window(*arguments)
+                evaluate.assert_not_called()
+
+    def test_standard_desktop_actions(self):
+        cases = (
+            ("desktop", (3,), 'hl.dispatch(hl.dsp.focus({ workspace = "3" }))'),
+            ("desktop_next", (), 'hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))'),
+            ("desktop_last", (), 'hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))'),
+            ("window_move_desktop", (3,), "3"),
+            ("window_move_desktop_left", (), "e-1"),
+            ("window_move_desktop_right", (), "e+1"),
+        )
+        for name, arguments, expected in cases:
+            with self.subTest(action=name):
+                if name.startswith("window_move"):
+                    expected = (
+                        'hl.dispatch(hl.dsp.window.move({ workspace = '
+                        f'"{expected}", follow = false }}))'
+                    )
+                with patch.object(self.hyprland, "_eval") as evaluate:
+                    getattr(self.hyprland.UserActions, name)(*arguments)
+                evaluate.assert_called_once_with(expected)
 
     def test_basic_window_dispatchers(self):
         cases = (
