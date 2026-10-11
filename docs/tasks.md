@@ -1,5 +1,8 @@
 # Tasks
 
+Candidate refactorings and verification criteria are recorded in
+[potential changes](potential-changes.md).
+
 ## Completed
 
 - [x] Make the test baseline independent of the host desktop session.
