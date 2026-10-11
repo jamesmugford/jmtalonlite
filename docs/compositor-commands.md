@@ -74,11 +74,21 @@ action overrides, plus `desk flip` / `flipper`, `window center`, and
 `center window`, `grow window`, and `shrink window` forms are removed. Community's
 still-current move-to-port forms remain available.
 
-Resize uses ten-pixel steps, defaulting to four and `height width`. Directional
-words select the corresponding axis once, rather than anchoring an edge. Floating
-windows are recentered after resizing. Tiled resizing still delegates to
-Hyprland's native layout behavior: the scrolling viewport clamp and Dwindle
-split-ratio sign issues are not resolved by this vocabulary update.
+Resize defaults to four and `height width`. Directional words select the
+corresponding axis once, rather than anchoring an edge. Floating windows are
+recentered after resizing.
+
+In the horizontal scrolling layout, width changes use the native `colresize`
+operation in **percentage points of usable layout width**: `window grow two width`
+adds two percentage points to the shared column width; the default adds four.
+These are numeric adjustments, not cycling through configured width presets.
+Hyprland applies its column-size limits and fits or centers the column. Height
+changes still use ten-pixel steps, preserving the column width around Hyprland's
+native height resize so its viewport clamp cannot undo the width adjustment.
+
+Floating windows and other layouts retain ten-pixel steps. Dwindle's split-ratio
+sign issue is still pending. The scrolling path targets horizontal columns;
+vertical scrolling orientation has not been verified.
 
 ## Sway-specific forms
 

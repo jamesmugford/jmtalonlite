@@ -149,10 +149,31 @@ def _resize_active_window(operation: str, amount: int, directions: str) -> None:
     selected = {axes[direction] for direction in requested}
     x = pixels if "width" in selected else 0
     y = pixels if "height" in selected else 0
+    column_change = (1 if operation == "grow" else -1) * amount / 100
+    if "width" not in selected:
+        column_change = 0
+    if y:
+        # Even a zero-width native resize can clamp an offscreen column. Restore
+        # its original width plus the requested fraction after resizing height.
+        scrolling_resize = (
+            "local width = window.layout.column.width; "
+            f"hl.dispatch(hl.dsp.window.resize({{ x = 0, y = {y}, relative = true }})); "
+            "hl.dispatch(hl.dsp.layout(\"colresize \" .. "
+            f"string.format(\"%.8f\", math.max(0, width + {column_change:.8f})))) "
+        )
+    else:
+        scrolling_resize = (
+            f'hl.dispatch(hl.dsp.layout("colresize {column_change:+.8f}")) '
+        )
     _eval(
         "local window = hl.get_active_window(); "
         "if window then "
-        f"hl.dispatch(hl.dsp.window.resize({{ x = {x}, y = {y}, relative = true }})); "
+        "if not window.floating and window.workspace "
+        'and window.workspace.tiled_layout == "scrolling" then '
+        f"{scrolling_resize}"
+        "else "
+        f"hl.dispatch(hl.dsp.window.resize({{ x = {x}, y = {y}, relative = true }})) "
+        "end; "
         "if window.floating then hl.dispatch(hl.dsp.window.center()) end "
         "end"
     )
@@ -279,7 +300,7 @@ class Actions:
         _dispatch("hl.dsp.window.center()")
 
     def hyprland_resize_window(operation: str, amount: int, directions: str):
-        """Resize in ten-pixel steps; directional words select width or height."""
+        """Resize axes in ten-pixel steps, or percentage points for scrolling width."""
         _resize_active_window(operation, amount, directions)
 
 

@@ -1,5 +1,6 @@
 import io
 import os
+import shutil
 import subprocess
 import types
 import unittest
@@ -184,6 +185,85 @@ class HyprlandTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         self.hyprland.Actions.hyprland_resize_window(*arguments)
                 evaluate.assert_not_called()
+
+    @unittest.skipUnless(shutil.which("lua"), "Lua interpreter is unavailable")
+    def test_scrolling_resize_executes_native_fractional_column_operations(self):
+        # Simulate the native viewport clamp, including its zero-width case.
+        # Execute the emitted Lua to exercise branch selection and ordering.
+        harness = """
+local column = { width = INITIAL_WIDTH }
+local window = {
+    floating = FLOATING,
+    workspace = { tiled_layout = LAYOUT },
+    layout = { column = column },
+}
+local height = 500
+local calls = {}
+hl = {
+    get_active_window = function() return WINDOW end,
+    dsp = {
+        window = {
+            resize = function(args) return { kind = "resize", args = args } end,
+            center = function() return { kind = "center" } end,
+        },
+        layout = function(message) return { kind = "layout", message = message } end,
+    },
+    dispatch = function(action)
+        table.insert(calls, action.kind)
+        if action.kind == "resize" then
+            height = height + action.args.y
+            column.width = math.min(0.5, column.width + action.args.x / 1000)
+        elseif action.kind == "layout" then
+            local arg = assert(action.message:match("^colresize (.+)$"))
+            local value = assert(tonumber(arg))
+            if arg:match("^[+-]") then value = column.width + value end
+            column.width = math.max(0.1, math.min(1.5, value))
+        end
+    end,
+}
+"""
+        cases = (
+            ("grow", 4, "width", 0.8, "scrolling", (0.84, 500, "layout")),
+            ("shrink", 2, "width", 0.8, "scrolling", (0.78, 500, "layout")),
+            ("grow", 4, "height width", 0.8, "scrolling", (0.84, 540, "resize,layout")),
+            ("shrink", 2, "height", 0.8, "scrolling", (0.8, 480, "resize,layout")),
+            ("grow", 4, "width", 1.5, "scrolling", (1.5, 500, "layout")),
+            (
+                "shrink",
+                200,
+                "height width",
+                0.8,
+                "scrolling",
+                (0.1, -1500, "resize,layout"),
+            ),
+            ("grow", 4, "width", 0.4, "floating", (0.44, 500, "resize,center")),
+            ("grow", 4, "width", 0.4, "dwindle", (0.44, 500, "resize")),
+            ("grow", 4, "width", 0.8, "empty", (0.8, 500, "")),
+        )
+        for operation, amount, directions, initial, mode, expected in cases:
+            with self.subTest(
+                operation=operation, directions=directions, mode=mode, initial=initial
+            ):
+                with patch.object(self.hyprland, "_eval") as evaluate:
+                    self.hyprland.Actions.hyprland_resize_window(
+                        operation, amount, directions
+                    )
+                layout = "dwindle" if mode == "dwindle" else "scrolling"
+                script = (
+                    harness.replace("INITIAL_WIDTH", str(initial))
+                    .replace("FLOATING", str(mode == "floating").lower())
+                    .replace("LAYOUT", f'"{layout}"')
+                    .replace("WINDOW", "nil" if mode == "empty" else "window")
+                    + evaluate.call_args.args[0]
+                    + '\nprint(column.width, height, table.concat(calls, ","))'
+                )
+                result = subprocess.run(
+                    ["lua", "-"], input=script, text=True, capture_output=True, check=True
+                )
+                actual = result.stdout.strip().split("\t")
+                self.assertAlmostEqual(float(actual[0]), expected[0])
+                self.assertEqual(float(actual[1]), expected[1])
+                self.assertEqual(actual[2] if len(actual) > 2 else "", expected[2])
 
     def test_standard_desktop_actions(self):
         cases = (
