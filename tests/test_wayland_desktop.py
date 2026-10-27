@@ -7,6 +7,7 @@ from unittest.mock import patch
 PLUGINS = Path(__file__).resolve().parents[1] / "plugins"
 sys.path.insert(0, str(PLUGINS))
 try:
+    from wayland_backend.clipboard import Clipboard
     from wayland_backend.desktop import WaylandDesktop
     from wayland_backend.errors import CapabilityUnavailable
     from wayland_backend.keyboard import VirtualKeyboard
@@ -22,6 +23,7 @@ class WaylandDesktopTests(unittest.TestCase):
     def test_composes_semantic_capabilities_without_constructor_io(self):
         desktop = WaylandDesktop()
         self.assertIsInstance(desktop._seats, SeatRegistry)
+        self.assertIsInstance(desktop._clipboard, Clipboard)
         self.assertIsInstance(desktop._outputs, OutputRegistry)
         self.assertIsInstance(desktop._keyboard, VirtualKeyboard)
         self.assertIsInstance(desktop._pointer, VirtualPointer)

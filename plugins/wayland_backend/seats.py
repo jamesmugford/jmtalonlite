@@ -85,7 +85,7 @@ class SeatRegistry:
         self._listener_lock = threading.Lock()
         self._seats: dict[int, _Seat] = {}
         self._selected_id: int | None = None
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners: dict[object, Callable[[], None]] = {}
 
     def bind(
         self, registry: Any, global_id: int, version: int, interface: type
@@ -141,15 +141,15 @@ class SeatRegistry:
         run_cleanup_steps(steps)
 
     def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
-        """Register a selected-seat listener and return an idempotent unsubscribe."""
+        """Invoke on the owner thread; return an independently idempotent handle."""
+        token = object()
         with self._listener_lock:
-            self._listeners.append(callback)
+            self._listeners[token] = callback
 
         def unsubscribe() -> None:
             """Remove this callback if it remains subscribed."""
             with self._listener_lock:
-                if callback in self._listeners:
-                    self._listeners.remove(callback)
+                self._listeners.pop(token, None)
 
         return unsubscribe
 
@@ -208,7 +208,7 @@ class SeatRegistry:
     def _notify(self) -> None:
         """Invoke every listener outside locks and preserve their failures."""
         with self._listener_lock:
-            listeners = tuple(self._listeners)
+            listeners = tuple(self._listeners.values())
         run_cleanup_steps(
             (f"selected seat listener {index}", listener)
             for index, listener in enumerate(listeners, start=1)

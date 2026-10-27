@@ -8,7 +8,7 @@ from itertools import count
 from typing import Any
 
 import talon
-from talon import Context, Module, actions, app, cron, registry, ui
+from talon import Context, Module, actions, app, clip, cron, registry, ui
 
 from .wayland_backend.desktop import WaylandDesktop
 from .wayland_backend.errors import CapabilityUnavailable
@@ -17,6 +17,7 @@ from .wayland_backend.key_spec import KeyAction, KeyPress, parse_key_spec
 from .wayland_backend.outputs import OutputTarget
 from .wayland_backend.session import is_wayland_session
 from .wayland_backend.windows import Window
+from .wayland_clipboard import WaylandClipboard
 from .wayland_scopes import WaylandScopes
 
 mod = Module()
@@ -34,6 +35,7 @@ if _modifier_token_ids is None:
 _FALLBACK_KEYS_KEY = "_jm_talon_lite_fallback_keyboard_keys"
 _fallback_held_keys = set(getattr(sys, _FALLBACK_KEYS_KEY, ()))
 _PROTOCOL_FEATURES = {
+    "ext_data_control_manager_v1": "native clipboard and primary selection",
     "wl_output": "output-bound gaze forwarding",
     "zwp_virtual_keyboard_manager_v1": "keyboard forwarding",
     "zwlr_virtual_pointer_manager_v1": "pointer, gaze, and hiss forwarding",
@@ -75,6 +77,8 @@ class _TalonWaylandBridge:
         """Construct an inactive bridge without Talon or Wayland side effects."""
         self.desktop = WaylandDesktop()
         self.scopes = WaylandScopes()
+        self.clipboard = WaylandClipboard(self.desktop, clip)
+        self._lifecycle_lock = threading.RLock()
         self._lock = threading.Lock()
         self._started = False
         self._cleanup_pending = False
@@ -89,6 +93,11 @@ class _TalonWaylandBridge:
 
     def start(self) -> None:
         """Start the bridge transactionally and allow safe repeated calls."""
+        with self._lifecycle_lock:
+            self._start()
+
+    def _start(self) -> None:
+        """Serialize installation against stop and Talon-side publication."""
         with self._lock:
             already_started = self._started
             cleanup_pending = self._cleanup_pending
@@ -112,6 +121,15 @@ class _TalonWaylandBridge:
                 self._unsubscribe_windows = unsubscribe_windows
             self.scopes.initialize()
             self.desktop.start()
+            if "ext_data_control_manager_v1" in dict(self.desktop.status().protocols):
+                try:
+                    self.clipboard.install()
+                except Exception as exc:
+                    print(
+                        f"Wayland clipboard integration unavailable: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
             self._warn_for_missing_protocols()
             if self.desktop.window_context_available():
                 self.scopes.install()
@@ -129,6 +147,11 @@ class _TalonWaylandBridge:
 
     def stop(self) -> None:
         """Release every callback and resource, allowing safe repeated calls."""
+        with self._lifecycle_lock:
+            self._stop()
+
+    def _stop(self) -> None:
+        """Retire publication before restoring providers and joining the owner."""
         with self._lock:
             self._started = False
             self._generation += 1
@@ -180,6 +203,7 @@ class _TalonWaylandBridge:
                 with self._lock:
                     if self._modifier_tokens.get(token) is pressed:
                         self._modifier_tokens.pop(token)
+        attempt("clipboard backend", self.clipboard.restore)
         desktop_stopped = attempt("Wayland desktop", self.desktop.stop)
         if desktop_stopped:
             with self._lock:
@@ -274,22 +298,24 @@ class _TalonWaylandBridge:
 
     def _apply_active_window(self, generation: int, revision: int) -> None:
         """Publish the latest active window through Talon's scope system."""
-        with self._lock:
-            if (
-                not self._started
-                or generation != self._generation
-                or revision != self._context_revision
-            ):
-                return
-            window = self._latest_window
-            self._context_job = None
-            self._context_job_clears = False
-        self.scopes.update(window, available=self.desktop.window_context_available())
+        with self._lifecycle_lock:
+            with self._lock:
+                if (
+                    not self._started
+                    or generation != self._generation
+                    or revision != self._context_revision
+                ):
+                    return
+                window = self._latest_window
+                self._context_job = None
+                self._context_job_clears = False
+            self.scopes.update(window, available=self.desktop.window_context_available())
 
     def _on_declarations_updated(self, _declarations) -> None:
         """Refresh active application aliases after Talon declaration changes."""
-        if self._started and self.scopes.available():
-            self.scopes.refresh_app_scope()
+        with self._lifecycle_lock:
+            if self._started and self.scopes.available():
+                self.scopes.refresh_app_scope()
 
     def _unregister_declaration_callback(self) -> None:
         """Remove this bridge's Talon declaration listener if still present."""

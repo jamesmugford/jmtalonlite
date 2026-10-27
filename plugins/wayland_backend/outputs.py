@@ -230,7 +230,7 @@ class OutputRegistry:
         self._listener_lock = threading.Lock()
         self._outputs: dict[int, _Output] = {}
         self._snapshots: dict[int, OutputSnapshot] = {}
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners: dict[object, Callable[[], None]] = {}
 
     def bind(
         self, registry: Any, global_id: int, version: int, interface: type
@@ -299,14 +299,14 @@ class OutputRegistry:
 
     def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Invoke a listener on the owner thread; return an idempotent unsubscribe."""
+        token = object()
         with self._listener_lock:
-            self._listeners.append(callback)
+            self._listeners[token] = callback
 
         def unsubscribe() -> None:
             """Remove this callback if it remains subscribed."""
             with self._listener_lock:
-                if callback in self._listeners:
-                    self._listeners.remove(callback)
+                self._listeners.pop(token, None)
 
         return unsubscribe
 
@@ -416,7 +416,7 @@ class OutputRegistry:
     def _notify(self) -> None:
         """Invoke every listener outside locks and preserve their failures."""
         with self._listener_lock:
-            listeners = tuple(self._listeners)
+            listeners = tuple(self._listeners.values())
         run_cleanup_steps(
             (f"output listener {index}", listener)
             for index, listener in enumerate(listeners, start=1)

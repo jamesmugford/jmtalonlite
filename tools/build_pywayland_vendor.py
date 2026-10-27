@@ -32,6 +32,7 @@ SOURCE_URL = (
     "7f48c575076b3e620a6ba3565dc877d3a9e665ff.tar.gz"
 )
 PROTOCOL_FILES = (
+    "ext-data-control-v1.xml",
     "wlr-virtual-pointer-unstable-v1.xml",
     "virtual-keyboard-unstable-v1.xml",
     "wlr-foreign-toplevel-management-unstable-v1.xml",
@@ -312,6 +313,8 @@ def build(talon_python: Path) -> None:
 
         verify = (
             "from pywayland import lib; "
+            "from pywayland.protocol.ext_data_control_v1 import "
+            "ExtDataControlManagerV1; "
             "from pywayland.protocol.virtual_keyboard_unstable_v1 import "
             "ZwpVirtualKeyboardManagerV1; "
             "from pywayland.protocol.wlr_foreign_toplevel_management_unstable_v1 "

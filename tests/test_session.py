@@ -11,6 +11,14 @@ finally:
 
 
 class SessionTests(unittest.TestCase):
+    def test_explicit_native_socket_with_xwayland_ui(self):
+        self.assertTrue(
+            is_wayland_session(
+                {"WAYLAND_DISPLAY": "", "JMTALONLITE_WAYLAND_DISPLAY": "wayland-1"}
+            )
+        )
+        self.assertFalse(is_wayland_session({"JMTALONLITE_WAYLAND_DISPLAY": ""}))
+
     def test_detects_standard_wayland_environment_values(self):
         self.assertTrue(is_wayland_session({"WAYLAND_DISPLAY": "wayland-1"}))
         self.assertTrue(is_wayland_session({"SWAYSOCK": "/run/sway.sock"}))

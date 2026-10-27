@@ -5,6 +5,10 @@ Candidate refactorings and verification criteria are recorded in
 
 ## Completed
 
+- [x] Add native Wayland clipboard integration for Talon and Community, including
+  live-tested selection capture and rich MIME restoration on Hyprland.
+- [x] Make subscription handles independently idempotent and recognize the explicit
+  Wayland socket override in session detection.
 - [x] Make the test baseline independent of the host desktop session.
 - [x] Replace the Control Mouse notification chain with one state-change action.
 - [x] Correct continuous-to-wheel scroll source transitions.

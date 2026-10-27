@@ -83,7 +83,7 @@ class ForeignToplevels:
         self._handles: dict[Any, _PendingWindow] = {}
         self._windows: dict[int, Window] = {}
         self._active: Window | None = None
-        self._listeners: list[Callable[[Window | None], None]] = []
+        self._listeners: dict[object, Callable[[Window | None], None]] = {}
         self._next_id = 1
 
     def bind(
@@ -150,15 +150,15 @@ class ForeignToplevels:
     def on_active_changed(
         self, callback: Callable[[Window | None], None]
     ) -> Callable[[], None]:
-        """Subscribe to active-window changes and return an unsubscribe callback."""
+        """Invoke on the owner thread; return an independently idempotent handle."""
+        token = object()
         with self._listener_lock:
-            self._listeners.append(callback)
+            self._listeners[token] = callback
 
         def unsubscribe() -> None:
             """Remove this listener if it remains subscribed."""
             with self._listener_lock:
-                if callback in self._listeners:
-                    self._listeners.remove(callback)
+                self._listeners.pop(token, None)
 
         return unsubscribe
 
@@ -310,7 +310,7 @@ class ForeignToplevels:
     def _notify(self, window: Window | None) -> None:
         """Notify a stable listener snapshot without failing the connection."""
         with self._listener_lock:
-            listeners = tuple(self._listeners)
+            listeners = tuple(self._listeners.values())
         for listener in listeners:
             try:
                 listener(window)

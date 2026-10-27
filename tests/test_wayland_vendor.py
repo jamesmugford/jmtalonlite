@@ -46,6 +46,7 @@ class WaylandVendorTests(unittest.TestCase):
         ffi_stub = (site / "pywayland" / "_ffi" / "lib.pyi").read_text()
         self.assertIn("def wl_display_cancel_read", ffi_stub)
         expected_protocols = {
+            "ext_data_control_v1.py",
             "wayland.py",
             "virtual_keyboard_unstable_v1.py",
             "wlr_foreign_toplevel_management_unstable_v1.py",

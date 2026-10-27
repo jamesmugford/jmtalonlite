@@ -43,8 +43,9 @@ WAYLAND_DISPLAY= /path/to/talon/talon
 ```
 
 This keeps Talon's UI on XWayland while the shim connects directly to Wayland
-for input and application contexts. `JMTALONLITE_WAYLAND_DISPLAY` overrides only the
-shim's connection; ordinary launches still use the standard Wayland environment.
+for input, clipboard access, and application contexts.
+`JMTALONLITE_WAYLAND_DISPLAY` overrides only the shim's connection; ordinary
+launches still use the standard Wayland environment.
 
 **Eye-tracking latency:** On the tested Hyprland/XWayland setup, eye tracking
 becomes noticeably slower when Talon's HUD or Settings window remains open on
@@ -88,6 +89,8 @@ launcher uses the same filename, copy it somewhere safe before replacing it.
 - Mouse button and scrolling commands such as `touch`, `righty`, `drag`, and
   `wheel up`, including continuous fractional-line scrolling
 - Active Wayland application and window-title contexts
+- Native clipboard access for Talon and Community, including capture/restoration,
+  rich MIME data, and separate primary selection where supported
 - Optional compositor voice-command layers for Hyprland, Sway, and niri
 
 ## Scope
@@ -122,11 +125,47 @@ from shared native Wayland input forwarding.
 - `zwp_virtual_keyboard_manager_v1` - keyboard input
 - `zwlr_virtual_pointer_manager_v1` - pointer, clicks, scrolling, gaze, hiss, and pop input
 - `zwlr_foreign_toplevel_manager_v1` - application and window-title contexts
+- `ext_data_control_manager_v1` - clipboard and optional primary selection
 
 Output-bound gaze requires virtual-pointer manager version 2 and a uniquely
 matched output. Startup reports missing capabilities. Forwarded Talon actions
 use the next implementation when the corresponding native capability is
 unavailable.
+
+### Clipboard integration
+
+When `ext-data-control-v1` is advertised at startup, Talon Lite replaces the
+private `talon.clip._backend` object. Talon's existing clipboard functions,
+actions, capture promises, and restoration contexts remain in use, including
+Community's direct Python calls. No additional commands or settings are needed.
+Without that protocol, Talon's original clipboard backend remains installed.
+
+Transfers run as nonblocking pipes alongside the shared Wayland event loop.
+Each transfer has a two-second deadline; snapshots are limited to 64 MIME formats
+and 64 MiB combined, with at most 128 simultaneous transfers. A failed snapshot
+raises rather than returning partial data for restoration. Clipboard failures
+do not replay operations through another backend or stop input forwarding.
+Wayland supports one MIME item per selection; multi-item writes are rejected.
+
+The backend hook is private and checked against Talon 1.0. Reload and shutdown
+restore the previous object only while Talon Lite still owns the replacement.
+The synthetic compatibility probe in `tools/probe_talon_clipboard.py` exercises
+the installed Talon wrappers without reading or changing the real clipboard.
+
+For live Community testing, use a scratch document:
+
+| Test | Commands | Expected result |
+| --- | --- | --- |
+| Write clipboard | `talon copy name`, then `paste that` | Active application name |
+| Read clipboard | Copy `hello world`, then `snake paste` | `hello_world` |
+| Capture selection | Select `hello world`, then `title that` | `Hello World` |
+| Restore clipboard | Copy `KEEP THIS`, say `talon insert version`, then `paste that` | Version information followed by `KEEP THIS` |
+
+These four Community workflows have been live-tested on Hyprland, along with
+Unicode, multiline text, identical-text capture, separate primary selection,
+and rich MIME restoration. Automated coverage also includes a local socket-pair
+Wayland peer using the real native bindings, including compositors that omit a
+selection-change event for the client's own clear request.
 
 ## Installation
 

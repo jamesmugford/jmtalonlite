@@ -12,12 +12,14 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Protocol
 
 from .bindings import WaylandBindings, load_wayland_bindings
 from .errors import CapabilityUnavailable
+from .transfers import PipeTransfer, PipeTransfers
 
 _DISCONNECT_FLUSH_TIMEOUT = 0.25
 
@@ -98,6 +100,53 @@ class WaylandConnection:
         self._adapter_by_interface: dict[str, ProtocolAdapter] = {}
         self._announced_globals: dict[int, tuple[str, int]] = {}
         self._active_globals: dict[str, dict[int, int]] = {}
+        self._transfers: PipeTransfers | None = None
+        self._barriers: dict[Any, Future[None]] = {}
+
+    @property
+    def transfers(self) -> PipeTransfers:
+        """Borrow the pipe service on the Wayland owner thread only."""
+        if self._transfers is None:
+            raise CapabilityUnavailable("Wayland transfer loop is not running")
+        return self._transfers
+
+    def cancel_transfers(self, owner: object) -> None:
+        """Cancel an adapter's pipes on the owner thread, including teardown."""
+        if self._transfers is not None:
+            self._transfers.cancel(owner)
+
+    def synchronize(self, operation: Callable[[], None], timeout: float = 1.0) -> None:
+        """Execute a request and wait off-thread until its events are dispatched."""
+        timeout = validate_timeout(timeout)
+        if threading.get_ident() == self._owner_thread_id:
+            raise RuntimeError("Cannot wait for Wayland events on the owner thread")
+
+        def begin() -> tuple[Any, Future[None]]:
+            operation()
+            future: Future[None] = Future()
+            callback = self._display.sync()
+            self._barriers[callback] = future
+            callback.dispatcher["done"] = self.guard(
+                lambda proxy, _serial: self._finish_barrier(proxy)
+            )
+            return callback, future
+
+        callback, future = self.execute(begin, timeout)
+        try:
+            future.result(timeout)
+        finally:
+            if not future.done():
+                try:
+                    self.execute(lambda: self._finish_barrier(callback), timeout)
+                except CapabilityUnavailable:
+                    pass  # Disconnect owns outstanding callbacks now.
+
+    def _finish_barrier(self, callback: Any) -> None:
+        """Retire one sync callback and unblock its waiting caller."""
+        future = self._barriers.pop(callback, None)
+        if future is not None:
+            callback._destroy()
+            future.set_result(None)
 
     @property
     def initialized(self) -> bool:
@@ -446,6 +495,16 @@ class WaylandConnection:
 
     def _event_loop(self) -> None:
         """Dispatch Wayland and mailbox events until shutdown is requested."""
+        with selectors.DefaultSelector() as selector:
+            self._transfers = PipeTransfers(selector)
+            try:
+                self._dispatch_events(selector)
+            finally:
+                self._transfers.close()
+                self._transfers = None
+
+    def _dispatch_events(self, selector: selectors.BaseSelector) -> None:
+        """Share one selector between display, mailbox, and clipboard pipes."""
         assert self._bindings is not None
         assert self._display is not None
         assert self._wake_read is not None
@@ -454,52 +513,52 @@ class WaylandConnection:
         display = self._display
         display_fd = display.get_fd()
 
-        with selectors.DefaultSelector() as selector:
-            selector.register(self._wake_read, selectors.EVENT_READ, "wake")
-            selector.register(display_fd, selectors.EVENT_READ, "display")
-            while not self._stopping.is_set():
-                self._drain_commands()
+        selector.register(self._wake_read, selectors.EVENT_READ, "wake")
+        selector.register(display_fd, selectors.EVENT_READ, "display")
+        while not self._stopping.is_set():
+            self._drain_commands()
+            self.transfers.expire()
+            if self._stopping.is_set():
+                break
+            while lib.wl_display_prepare_read(display._ptr) != 0:
+                display.dispatch(block=False)
+
+            prepared = True
+            try:
+                events = selectors.EVENT_READ
+                flush_result = display.flush()
+                if flush_result == -1:
+                    if ffi.errno != errno.EAGAIN:
+                        raise OSError(ffi.errno, "wl_display_flush failed")
+                    events |= selectors.EVENT_WRITE
+                selector.modify(display_fd, events, "display")
+                selected = selector.select(self.transfers.timeout())
+                display_events = 0
+                for key, mask in selected:
+                    if key.data == "wake":
+                        self._drain_wakeup()
+                    elif key.data == "display":
+                        display_events |= mask
+
                 if self._stopping.is_set():
                     break
-                while lib.wl_display_prepare_read(display._ptr) != 0:
+                if display_events & selectors.EVENT_READ:
+                    read_result = lib.wl_display_read_events(display._ptr)
+                    prepared = False
+                    if read_result == -1:
+                        error = lib.wl_display_get_error(display._ptr)
+                        raise RuntimeError(f"Wayland read failed with error {error}")
                     display.dispatch(block=False)
-
-                prepared = True
-                try:
-                    events = selectors.EVENT_READ
-                    flush_result = display.flush()
-                    if flush_result == -1:
-                        if ffi.errno != errno.EAGAIN:
-                            raise OSError(ffi.errno, "wl_display_flush failed")
-                        events |= selectors.EVENT_WRITE
-                    selector.modify(display_fd, events, "display")
-                    selected = selector.select()
-                    display_events = 0
-                    for key, mask in selected:
-                        if key.data == "wake":
-                            self._drain_wakeup()
-                        else:
-                            display_events |= mask
-
-                    if self._stopping.is_set():
-                        lib.wl_display_cancel_read(display._ptr)
-                        prepared = False
-                        break
-                    if display_events & selectors.EVENT_READ:
-                        read_result = lib.wl_display_read_events(display._ptr)
-                        prepared = False
-                        if read_result == -1:
-                            error = lib.wl_display_get_error(display._ptr)
-                            raise RuntimeError(
-                                f"Wayland read failed with error {error}"
-                            )
-                        display.dispatch(block=False)
-                    else:
-                        lib.wl_display_cancel_read(display._ptr)
-                        prepared = False
-                finally:
-                    if prepared:
-                        lib.wl_display_cancel_read(display._ptr)
+                else:
+                    lib.wl_display_cancel_read(display._ptr)
+                    prepared = False
+                self.transfers.expire()
+                for key, _mask in selected:
+                    if isinstance(key.data, PipeTransfer):
+                        self.transfers.service(key.data)
+            finally:
+                if prepared:
+                    lib.wl_display_cancel_read(display._ptr)
 
     def _drain_commands(self) -> None:
         """Execute every queued command that has not been cancelled."""
@@ -607,6 +666,10 @@ class WaylandConnection:
                 failures.append((label, exc))
 
         try:
+            barriers, self._barriers = self._barriers, {}
+            for callback, future in barriers.items():
+                future.set_exception(CapabilityUnavailable("Wayland connection stopped"))
+                attempt("sync callback", callback._destroy)
             for adapter in reversed(self._adapters):
                 attempt(f"{adapter.interface_name} cleanup", adapter.close)
             attempt("shutdown flush", self._flush_for_disconnect)

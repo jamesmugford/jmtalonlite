@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import os
 import sys
+import threading
 import types
 import unittest
 from contextlib import contextmanager
@@ -96,6 +97,7 @@ def load_bridge_module():
     talon.actions = FakeActions()
     talon.app = FakeApp()
     talon.cron = FakeCron()
+    talon.clip = types.SimpleNamespace(_backend=object())
     talon.registry = FakeRegistry()
     rect = types.SimpleNamespace(x=100.0, y=200.0, width=3840.0, height=2160.0)
     main_screen = types.SimpleNamespace(
@@ -189,6 +191,54 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             job.callback()
             self.assertEqual(self.talon.scope.scopes["app"].func()["name"], "terminal")
             self.assertEqual(self.talon.scope.scopes["win"].func()["title"], "Second")
+
+    def test_stop_cannot_be_overtaken_by_inflight_scope_publication(self):
+        entered = threading.Event()
+        release = threading.Event()
+        stopping = threading.Event()
+        stopped = threading.Event()
+        failures = []
+        original_app = self.talon.scope.scopes["app"].func
+        with self.running_bridge() as bridge:
+            update = bridge.scopes.update
+
+            def blocked_update(*args, **kwargs):
+                entered.set()
+                if not release.wait(2):
+                    raise TimeoutError("Test did not release publication")
+                update(*args, **kwargs)
+
+            def stop():
+                stopping.set()
+                try:
+                    bridge.stop()
+                except Exception as exc:
+                    failures.append(exc)
+                finally:
+                    stopped.set()
+
+            bridge._queue_active_window(
+                bridge._generation, self.module.Window(1, "Editor", "editor", ())
+            )
+            with patch.object(bridge.scopes, "update", side_effect=blocked_update):
+                publisher = threading.Thread(target=self.talon.cron.jobs[-1].callback)
+                stopper = threading.Thread(target=stop)
+                publisher.start()
+                try:
+                    self.assertTrue(entered.wait(2))
+                    stopper.start()
+                    self.assertTrue(stopping.wait(2))
+                    self.assertFalse(stopped.wait(0.02))
+                finally:
+                    release.set()
+                    publisher.join(2)
+                    if stopper.ident is not None:
+                        stopper.join(2)
+            self.assertFalse(publisher.is_alive())
+            self.assertFalse(stopper.is_alive())
+            self.assertEqual(failures, [])
+            self.assertFalse(bridge._started)
+            self.assertIs(self.talon.scope.scopes["app"].func, original_app)
 
     def test_app_name_preserves_wayland_app_id_case(self):
         with self.running_bridge() as bridge:
@@ -335,6 +385,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
     def test_start_delegates_and_warns_only_for_missing_protocols(self):
         bridge = self.module._TalonWaylandBridge()
         complete = (
+            ("ext_data_control_manager_v1", 1),
             ("wl_output", 4),
             ("zwp_virtual_keyboard_manager_v1", 1),
             ("zwlr_virtual_pointer_manager_v1", 2),
@@ -355,6 +406,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
                 return_value=True,
             ),
             patch.object(bridge.scopes, "install") as install,
+            patch.object(bridge.clipboard, "install") as clipboard_install,
             patch("builtins.print") as output,
         ):
             bridge.start()
@@ -362,6 +414,7 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             bridge.stop()
         start.assert_called_once_with()
         install.assert_called_once_with()
+        clipboard_install.assert_called_once_with()
         output.assert_not_called()
 
     def test_warns_when_virtual_pointer_cannot_bind_an_output(self):
@@ -381,6 +434,41 @@ class TalonWaylandBridgeTests(unittest.TestCase):
             bridge._warn_for_missing_protocols()
 
         self.assertIn("version 2", output.call_args.args[0])
+
+    def test_clipboard_backend_is_retired_before_desktop_shutdown(self):
+        bridge = self.module._TalonWaylandBridge()
+        events = []
+        status = types.SimpleNamespace(
+            protocols=(("ext_data_control_manager_v1", 1),),
+            running=True,
+            error=None,
+        )
+        with (
+            patch.object(bridge.desktop, "start"),
+            patch.object(bridge.desktop, "status", return_value=status),
+            patch.object(bridge.clipboard, "install", side_effect=lambda: events.append("install")),
+            patch.object(bridge.clipboard, "restore", side_effect=lambda: events.append("restore")),
+            patch.object(bridge.desktop, "stop", side_effect=lambda: events.append("stop")),
+            patch("builtins.print"),
+        ):
+            bridge.start()
+            bridge.stop()
+        self.assertEqual(events, ["install", "restore", "stop"])
+
+    def test_clipboard_compatibility_failure_does_not_stop_input(self):
+        bridge = self.module._TalonWaylandBridge()
+        status = types.SimpleNamespace(protocols=(("ext_data_control_manager_v1", 1),))
+        with (
+            patch.object(bridge.desktop, "start"),
+            patch.object(bridge.desktop, "status", return_value=status),
+            patch.object(bridge.clipboard, "install", side_effect=RuntimeError("contract")),
+            patch.object(bridge.desktop, "stop") as stop,
+            patch("builtins.print"),
+        ):
+            bridge.start()
+            self.assertTrue(bridge._started)
+            stop.assert_not_called()
+            bridge.stop()
 
     def test_start_recovers_an_autonomously_stopped_desktop(self):
         bridge = self.module._TalonWaylandBridge()

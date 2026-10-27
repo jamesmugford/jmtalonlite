@@ -24,8 +24,11 @@ Generated bindings use these pinned protocol definitions:
   `91ef4ce2081fec77d060ce2e9879535697e23b91`
 - `wlr-foreign-toplevel-management-unstable-v1.xml`, wlr-protocols commit
   `005d69d048ccceb2af3f5b86665821e8fa9a87b8`
+- `ext-data-control-v1.xml`, wayland-protocols commit
+  `b9edf66597586c914b5b1ff3d964d7ed201adab9`, from
+  `staging/ext-data-control/ext-data-control-v1.xml`
 
-Only `wayland.py` and the three extension bindings are retained in the protocol
+Only `wayland.py` and the four extension bindings are retained in the protocol
 package. The stale build source, unrelated stock bindings, and upstream wheel
 metadata are removed. The scanner remains because PyWayland's runtime argument
 types import it. The removed metadata describes the unmodified wheel and would
@@ -52,3 +55,8 @@ On the supported interpreter they also exercise a native CFFI callback on an
 owner thread using a local socket pair, without connecting to a compositor or
 sending input. On 3.14t this also checks that importing and using the extension
 does not enable the GIL.
+
+The clipboard binding is generated with the existing pinned scanner. Adding it
+does not change the C extension or native library versions. The native clipboard
+test uses a local wire-protocol peer to verify new-id events, null selections,
+file-descriptor passing, large transfers, and responsiveness during stalled reads.

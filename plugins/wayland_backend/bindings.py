@@ -23,6 +23,7 @@ def load_wayland_bindings() -> WaylandBindings:
     activate()
     from pywayland import ffi, lib
     from pywayland.client import Display
+    from pywayland.protocol.ext_data_control_v1 import ExtDataControlManagerV1
     from pywayland.protocol.virtual_keyboard_unstable_v1 import (
         ZwpVirtualKeyboardManagerV1,
     )
@@ -37,6 +38,7 @@ def load_wayland_bindings() -> WaylandBindings:
     if not hasattr(lib, "wl_display_cancel_read"):
         raise RuntimeError("Bundled PyWayland is missing wl_display_cancel_read")
     interfaces = (
+        ExtDataControlManagerV1,
         WlSeat,
         WlOutput,
         ZwpVirtualKeyboardManagerV1,

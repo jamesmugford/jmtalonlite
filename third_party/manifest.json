@@ -11,6 +11,10 @@
     "tag": "1.26.0",
     "commit": "87cc8a8728a923fc57938faa81ba0e74f34ecdc7"
   },
+  "wayland_protocols": {
+    "commit": "b9edf66597586c914b5b1ff3d964d7ed201adab9",
+    "source": "https://gitlab.freedesktop.org/wayland/wayland-protocols"
+  },
   "bundle": {
     "targets": {
       "cpython-314t-x86_64-linux-gnu": {
@@ -33,12 +37,14 @@
     "build_model": "Pinned source inputs reconstructed with the host GCC and Talon headers; not bit-for-bit reproducible"
   },
   "protocols": {
+    "ext-data-control-v1.xml": "293deba5dfdb974fbcf8dcf891a30a51a36a8bba0047dc6bdf6a03194089b7fb",
     "wayland.xml": "cc860987e54f8d85c940e97fa1270c69b6e4ad31fbcf5a7f00107ce1157f5e07",
     "wlr-virtual-pointer-unstable-v1.xml": "3ff6d540be0bc5228195bf072bde42117ea17945a5c2061add5d3cf97d6bb524",
     "virtual-keyboard-unstable-v1.xml": "b4898f92c27db08c75bb82e9eeec5b179b80a4d6aeb34c26da60b485fca9c450",
     "wlr-foreign-toplevel-management-unstable-v1.xml": "4ecc4588858e29fe680a33521e1f22bcf22071d66d1553fe96b4ddec03d591d2"
   },
   "generated_protocols": {
+    "ext_data_control_v1.py": "5407e8face8ca0da370c6407456581e6cfe7b751db7a57ed7b007ce8f72446a3",
     "wayland.py": "12b4f10759b0e032a6231e733725bff4a9b69a927d741f0d6fc6f7197265a8c9",
     "virtual_keyboard_unstable_v1.py": "b5d207513ec4b4129f8b35c73a79f0114fb5b86d64867e625938ad40aab6a94b",
     "wlr_foreign_toplevel_management_unstable_v1.py": "dadb583f4a08b72f4c1de613d4a01ab272386db3f96aba6207af6f36c5360e30",

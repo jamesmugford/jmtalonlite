@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .bindings import WaylandBindings
+from .clipboard import TRANSFER_TIMEOUT, Clipboard, MimePayload
 from .connection import WaylandConnection, monotonic_timestamp_ms
 from .errors import CapabilityUnavailable
 from .key_spec import KeyPress, modifier_chord
@@ -28,6 +29,8 @@ class DesktopStatus:
     active_window: Window | None
     keyboard_available: bool
     pointer_available: bool
+    clipboard_available: bool
+    primary_selection_available: bool
     error: str | None
 
 
@@ -56,11 +59,13 @@ class WaylandDesktop:
             timestamp_ms,
         )
         self._windows = ForeignToplevels(self._connection)
+        self._clipboard = Clipboard(self._connection, self._seats)
         self._connection.register(self._seats)
         self._connection.register(self._outputs)
         self._connection.register(self._keyboard)
         self._connection.register(self._pointer)
         self._connection.register(self._windows)
+        self._connection.register(self._clipboard)
 
     def start(self, timeout: float = 5.0) -> None:
         """Connect all desktop capabilities and wait until discovery completes."""
@@ -81,6 +86,8 @@ class WaylandDesktop:
             active_window=self._windows.active(),
             keyboard_available=self._keyboard.available(),
             pointer_available=self._pointer.available(),
+            clipboard_available=self._clipboard.available(),
+            primary_selection_available=self._clipboard.available("select"),
             error=self._connection.error(),
         )
 
@@ -89,6 +96,34 @@ class WaylandDesktop:
     ) -> Callable[[], None]:
         """Subscribe to owner-thread active-window changes."""
         return self._windows.on_active_changed(callback)
+
+    def clipboard_available(self, mode: str = "main") -> bool:
+        """Return whether the native clipboard mode is currently available."""
+        return self._clipboard.available(mode)
+
+    def clipboard_serial(self, mode: str = "main") -> int:
+        """Return the selection revision, including repeated identical copies."""
+        return self._clipboard.serial(mode)
+
+    def read_clipboard(
+        self,
+        mode: str = "main",
+        formats: tuple[str, ...] | None = None,
+        *,
+        timeout: float = TRANSFER_TIMEOUT,
+    ) -> MimePayload:
+        """Read an immutable MIME-labelled snapshot without blocking input I/O."""
+        return self._clipboard.read(mode, formats, timeout=timeout)
+
+    def write_clipboard(
+        self,
+        payload: MimePayload,
+        mode: str = "main",
+        *,
+        timeout: float = TRANSFER_TIMEOUT,
+    ) -> None:
+        """Publish a MIME-labelled selection; an empty payload clears it."""
+        self._clipboard.write(payload, mode, timeout=timeout)
 
     def window_context_available(self) -> bool:
         """Return whether native application and window context is available."""
