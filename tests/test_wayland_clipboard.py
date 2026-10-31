@@ -11,7 +11,7 @@ try:
     from wayland_backend.clipboard import Clipboard, validate_payload
     from wayland_backend.errors import CapabilityUnavailable
     from wayland_backend.seats import SeatRegistry
-    from wayland_backend.transfers import PipeTransfers
+    from wayland_backend.transfers import PipeTransfers, ReadBudget
 finally:
     sys.path.remove(str(PLUGINS))
 
@@ -79,10 +79,27 @@ class ClipboardTests(unittest.TestCase):
 
     def offer(self, *formats):
         offer = DataProxy()
+        self.addCleanup(self.close_writers, offer)
         self.device.dispatcher["data_offer"](self.device, offer)
         for fmt in formats:
             offer.dispatcher["offer"](offer, fmt)
         return offer
+
+    def close_writers(self, offer):
+        while offer.writers:
+            os.close(offer.writers.pop()[1])
+
+    def pump(self, *transfers):
+        for _ in range(20):
+            if all(transfer.future.done() for transfer in transfers):
+                return
+            for key, _ in self.selector.select(0.1):
+                self.transfers.service(key.data)
+        self.fail("Transfer did not finish")
+
+    def assert_closed(self, fd):
+        with self.assertRaises(OSError):
+            os.fstat(fd)
 
     def test_selection_modes_are_distinct_and_primary_is_optional(self):
         self.assertTrue(self.clipboard.available())
@@ -134,28 +151,130 @@ class ClipboardTests(unittest.TestCase):
         self.clipboard.write(())
         self.assertEqual(self.device.calls[-1], ("selection", None))
 
-    def test_reads_preserve_multiple_formats_and_cancel_on_replacement(self):
+    def test_reads_preserve_multiple_formats_after_selection_changes(self):
+        for mode in ("main", "select"):
+            for change in ("replace", "clear", "own clear"):
+                with self.subTest(mode=mode, change=change):
+                    offer = self.offer("text/plain", "application/custom")
+                    self.select(offer, mode)
+                    transfers = self.clipboard._begin_read(mode, None, 2)
+                    try:
+                        if change == "replace":
+                            self.select(self.offer("text/html"), mode)
+                        elif change == "clear":
+                            self.select(None, mode)
+                        else:
+                            self.clipboard.write((), mode)
+                        self.assertTrue(offer.destroyed)
+                        if change != "replace":
+                            self.assertEqual(self.clipboard.read(mode), ())
+                        for _, transfer in transfers:
+                            self.assertFalse(transfer.future.done())
+                        for name, fd in offer.writers:
+                            os.write(fd, name.encode())
+                    finally:
+                        self.close_writers(offer)
+                    self.pump(*(transfer for _, transfer in transfers))
+                    self.assertEqual(
+                        [(name, t.future.result(0)) for name, t in transfers],
+                        [
+                            ("text/plain", b"text/plain"),
+                            ("application/custom", b"application/custom"),
+                        ],
+                    )
+                    for _, transfer in transfers:
+                        self.assert_closed(transfer.fd)
+
+    def test_retired_offer_reads_keep_their_deadline(self):
+        offer = self.offer("text/plain")
+        self.select(offer)
+        incoming = self.clipboard._begin_read("main", None, 2)[0][1]
+        self.select(None)
+        self.assertFalse(incoming.future.done())
+        self.transfers.expire(incoming.deadline)
+        with self.assertRaisesRegex(TimeoutError, "timed out"):
+            incoming.future.result(0)
+        self.assert_closed(incoming.fd)
+        self.assertTrue(self.clipboard.available())
+        self.assertEqual(self.connection.failures, [])
+
+    def pending_read_and_write(self):
         offer = self.offer("text/plain", "application/custom")
         self.select(offer)
-        transfers = self.clipboard._begin_read("main", None, 2)
-        self.assertEqual(
-            [name for name, _ in transfers], ["text/plain", "application/custom"]
-        )
-        for name, fd in offer.writers:
-            os.write(fd, name.encode())
-            os.close(fd)
-        for _ in range(2):
-            for key, _ in self.selector.select(0.1):
-                self.transfers.service(key.data)
-        self.assertEqual(
-            [t.future.result() for _, t in transfers],
-            [b"text/plain", b"application/custom"],
-        )
-        pending = self.clipboard._begin_read("main", ("text/plain",), 2)[0][1]
-        self.select(None)
+        incoming = self.clipboard._begin_read("main", ("text/plain",), 2)[0][1]
+        self.clipboard.write((("text/plain", b"paste"),))
+        source = self.manager.sources[-1]
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, reader)
+        source.dispatcher["send"](source, "text/plain", writer)
+        return offer, incoming, reader
+
+    def assert_other_transfers_complete(self, offer, incoming, reader):
+        self.assertFalse(incoming.future.done())
+        # Failed snapshots have no remaining readers; the earlier read survives.
+        for _, fd in offer.writers[1:]:
+            with self.assertRaises(BrokenPipeError):
+                os.write(fd, b"discarded")
+        os.write(offer.writers[0][1], b"unrelated")
+        self.close_writers(offer)
+        self.pump(incoming)
+        self.assertEqual(incoming.future.result(0), b"unrelated")
+        self.assertEqual(os.read(reader, 100), b"paste")
+        self.assertEqual(os.read(reader, 100), b"")
+        self.assertEqual(self.connection.failures, [])
+
+    def test_failed_read_setup_cancels_only_its_snapshot(self):
+        for failure in ("receive", "registration"):
+            with self.subTest(failure=failure):
+                offer, incoming, reader = self.pending_read_and_write()
+                active_fds = set(self.selector.get_map())
+                receive = offer.receive
+
+                def receive_or_fail(name, fd):
+                    if name == "application/custom":
+                        raise ValueError("receive failed")
+                    receive(name, fd)
+
+                if failure == "receive":
+                    fail = patch.object(offer, "receive", side_effect=receive_or_fail)
+                    error = "receive failed"
+                else:
+                    fail = patch(
+                        "wayland_backend.transfers.MAX_TRANSFERS", len(active_fds) + 1
+                    )
+                    error = "Too many pending"
+                with fail, self.assertRaisesRegex((ValueError, OSError), error):
+                    self.clipboard.read()
+                self.assertEqual(set(self.selector.get_map()), active_fds)
+                self.assert_other_transfers_complete(offer, incoming, reader)
+
+    def test_failed_read_result_cancels_only_its_snapshot(self):
+        offer, incoming, reader = self.pending_read_and_write()
+        active_fds = set(self.selector.get_map())
+        snapshot = []
+
+        def execute_and_fail_first_format(callback, timeout=1):
+            result = callback()
+            if result is not None:
+                snapshot.extend(result)
+                os.write(offer.writers[1][1], b"oversized")
+                self.transfers.service(snapshot[0][1])
+            return result
+
+        with (
+            patch("wayland_backend.clipboard.ReadBudget", return_value=ReadBudget(3)),
+            patch.object(
+                self.connection, "execute", side_effect=execute_and_fail_first_format
+            ),
+            self.assertRaisesRegex(ValueError, "byte limit"),
+        ):
+            self.clipboard.read()
         with self.assertRaisesRegex(RuntimeError, "cancelled"):
-            pending.future.result()
-        os.close(offer.writers[-1][1])
+            snapshot[1][1].future.result(0)
+        for _, transfer in snapshot:
+            self.assert_closed(transfer.fd)
+        self.assertEqual(set(self.selector.get_map()), active_fds)
+        self.assert_other_transfers_complete(offer, incoming, reader)
 
     def test_source_cancellation_allows_already_requested_paste_to_finish(self):
         self.clipboard.write((("text/plain", b"paste"),))
@@ -183,21 +302,52 @@ class ClipboardTests(unittest.TestCase):
     def test_seat_loss_cancels_reads_and_writes_before_releasing_seat(self):
         offer = self.offer("text/plain")
         self.select(offer)
+        retired = self.clipboard._begin_read("main", None, 2)[0][1]
+        self.select(self.offer("text/plain"))
         incoming = self.clipboard._begin_read("main", None, 2)[0][1]
-        self.addCleanup(os.close, offer.writers[-1][1])
         self.clipboard.write((("text/plain", b"data"),))
         source = self.manager.sources[-1]
         reader, writer = os.pipe()
         self.addCleanup(os.close, reader)
         source.dispatcher["send"](source, "text/plain", writer)
         self.seats.remove(1)
-        with self.assertRaisesRegex(RuntimeError, "cancelled"):
-            incoming.future.result()
+        for transfer in (retired, incoming):
+            with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                transfer.future.result(0)
+            self.assert_closed(transfer.fd)
         self.assertEqual(os.read(reader, 1), b"")
         self.assertFalse(self.clipboard.available())
         self.assertTrue(self.device.destroyed)
         self.assertTrue(source.destroyed)
         self.assertEqual(self.connection.failures, [])
+
+    def assert_retired_reads_cancelled(self, teardown):
+        incoming = []
+        for mode in ("main", "select"):
+            offer = self.offer("text/plain")
+            self.select(offer, mode)
+            incoming.append(self.clipboard._begin_read(mode, None, 2)[0][1])
+            self.select(None, mode)
+        teardown()
+        teardown()
+        for transfer in incoming:
+            with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                transfer.future.result(0)
+            self.assert_closed(transfer.fd)
+        self.assertFalse(self.clipboard.available())
+        self.assertTrue(self.device.destroyed)
+        self.assertEqual(self.connection.failures, [])
+
+    def test_finished_device_cancels_retired_reads(self):
+        self.assert_retired_reads_cancelled(
+            lambda: self.device.dispatcher["finished"](self.device)
+        )
+
+    def test_manager_removal_cancels_retired_reads(self):
+        self.assert_retired_reads_cancelled(lambda: self.clipboard.remove(2))
+
+    def test_close_cancels_retired_reads(self):
+        self.assert_retired_reads_cancelled(self.clipboard.close)
 
     def test_finished_device_does_not_recreate_until_seat_changes(self):
         self.device.dispatcher["finished"](self.device)

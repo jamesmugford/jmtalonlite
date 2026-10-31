@@ -155,7 +155,7 @@ class Clipboard:
 
                 def cancel_pending() -> None:
                     for transfer in pending:
-                        self._connection.cancel_transfers(transfer.owner)
+                        self._connection.transfers.cancel_transfer(transfer)
 
                 try:
                     self._connection.execute(cancel_pending)
@@ -238,7 +238,7 @@ class Clipboard:
     def _begin_read(
         self, mode: str, formats: tuple[str, ...] | None, timeout: float
     ) -> tuple[tuple[str, PipeTransfer], ...]:
-        self._require_device(mode)
+        device = self._require_device(mode)
         offer = self._selections[mode]
         if offer is None:
             return ()
@@ -256,8 +256,10 @@ class Clipboard:
             for name in dict.fromkeys(names):
                 reader, writer = os.pipe2(os.O_CLOEXEC)
                 try:
+                    # Requested pipes outlive their offer, just like outgoing
+                    # writes outlive their source. Device teardown still owns both.
                     transfer = service.start(
-                        reader, offer, timeout=timeout, budget=budget
+                        reader, device, timeout=timeout, budget=budget
                     )
                     transfers.append((name, transfer))
                     if transfer.future.done():
@@ -266,7 +268,8 @@ class Clipboard:
                 finally:
                     os.close(writer)
         except Exception:
-            self._connection.cancel_transfers(offer)
+            for _, transfer in transfers:
+                service.cancel_transfer(transfer)
             raise
         return tuple(transfers)
 
@@ -319,12 +322,7 @@ class Clipboard:
 
     def _retire_offer(self, offer: _Offer) -> None:
         self._offers.pop(offer.proxy, None)
-        run_cleanup_steps(
-            (
-                ("clipboard reads", lambda: self._connection.cancel_transfers(offer)),
-                ("clipboard offer", lambda: self._destroy(offer.proxy)),
-            )
-        )
+        self._destroy(offer.proxy)
 
     def _retire_device(self) -> None:
         device, self._device = self._device, None
@@ -337,7 +335,7 @@ class Clipboard:
         self._selections = {"main": None, "select": None}
         sources, self._sources = self._sources, {}
         steps = [
-            ("clipboard writes", lambda: self._connection.cancel_transfers(device))
+            ("clipboard transfers", lambda: self._connection.cancel_transfers(device))
         ]
         steps.extend(
             ("clipboard offer", lambda offer=offer: self._retire_offer(offer))

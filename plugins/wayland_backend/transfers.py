@@ -117,11 +117,15 @@ class PipeTransfers:
         deadline = min(t.deadline for t in self._active.values())
         return max(0.0, deadline - time.monotonic())
 
+    def cancel_transfer(self, transfer: PipeTransfer) -> None:
+        """Cancel one pipe without affecting other transfers from the same owner."""
+        self._finish(transfer, RuntimeError("Clipboard transfer cancelled"))
+
     def cancel(self, owner: object) -> None:
-        """Retire all transfers belonging to one removed offer or device."""
+        """Retire all transfers belonging to one owner."""
         for transfer in tuple(self._active.values()):
             if transfer.owner is owner:
-                self._finish(transfer, RuntimeError("Clipboard transfer cancelled"))
+                self.cancel_transfer(transfer)
 
     def close(self) -> None:
         """Close every descriptor and wake all waiting callers."""

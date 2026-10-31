@@ -108,6 +108,25 @@ class PipeTransferTests(unittest.TestCase):
             incoming.future.result()
         self.assert_closed(reader)
 
+    def test_single_transfer_cancellation_preserves_same_owner_reads_and_writes(self):
+        owner = object()
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, writer)
+        cancelled = self.transfers.start(reader, owner, timeout=2)
+        other_reader, other_writer = os.pipe()
+        incoming = self.transfers.start(other_reader, owner, timeout=2)
+        outgoing = self.transfers.start(
+            other_writer, owner, timeout=2, payload=b"unrelated"
+        )
+        self.transfers.cancel_transfer(cancelled)
+        self.transfers.cancel_transfer(cancelled)
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            cancelled.future.result(0)
+        self.assert_closed(reader)
+        self.pump(incoming, outgoing)
+        self.assertEqual(incoming.future.result(), b"unrelated")
+        self.assertEqual(outgoing.future.result(), b"")
+
     def test_shutdown_completes_every_waiter_even_after_unregister_failure(self):
         incoming = []
         for _ in range(2):

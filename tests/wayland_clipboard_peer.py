@@ -30,6 +30,10 @@ def read_string(data, offset=0):
     return value, offset + 4 + ((length + 3) & ~3)
 
 
+def message(target, opcode, payload=b""):
+    return struct.pack("=II", target, ((8 + len(payload)) << 16) | opcode) + payload
+
+
 class ClipboardPeer:
     def __init__(self, sock):
         self.sock = sock
@@ -41,16 +45,19 @@ class ClipboardPeer:
         self.fds = deque()
         self.stalled_fds = []
         self.stall_received = threading.Event()
+        self.replace_next_read = threading.Event()
         self.error = None
 
     def send(self, target, opcode, payload=b"", fd=None):
-        header = struct.pack("=II", target, ((8 + len(payload)) << 16) | opcode)
+        self.send_batch((message(target, opcode, payload),), fd)
+
+    def send_batch(self, messages, fd=None):
         ancillary = (
             []
             if fd is None
             else [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd]))]
         )
-        data = header + payload
+        data = b"".join(messages)
         count = self.sock.sendmsg([data], ancillary)
         if count < len(data):
             self.sock.sendall(data[count:])
@@ -75,6 +82,27 @@ class ClipboardPeer:
         for name in names:
             self.send(offer, 0, string(name))
         self.send(device, selection_event, uint(offer))
+
+    def replace_during_read(self, source, name, fd):
+        device = next(key for key, kind in self.objects.items() if kind == "device")
+        assert self.selection[0] == source
+        self.selection[0] = None
+        offer = self.next_offer
+        self.next_offer += 1
+        self.objects[offer] = "offer"
+        self.offers[offer] = None
+        # One wire batch ensures selection retirement precedes pipe completion,
+        # even when the source belongs to this client and answers immediately.
+        self.send_batch(
+            (
+                message(source, 0, string(name)),
+                message(source, 1),
+                message(device, 0, uint(offer)),
+                message(offer, 0, string("text/plain")),
+                message(device, 1, uint(offer)),
+            ),
+            fd,
+        )
 
     def request(self, target, opcode, data):
         kind = self.objects[target]
@@ -134,8 +162,14 @@ class ClipboardPeer:
             fd = self.fds.popleft()
             source = self.offers[target]
             if source is not None:
-                self.send(source, 0, string(name), fd)
-                os.close(fd)
+                try:
+                    if self.replace_next_read.is_set():
+                        self.replace_next_read.clear()
+                        self.replace_during_read(source, name, fd)
+                    else:
+                        self.send(source, 0, string(name), fd)
+                finally:
+                    os.close(fd)
             elif name == "application/x-stall":
                 self.stalled_fds.append(fd)
                 self.stall_received.set()
@@ -230,6 +264,17 @@ def exercise():
         assert desktop.clipboard_serial() == serial  # No delayed clear echo.
         desktop.write_clipboard((("text/plain", b""),))
         assert desktop.read_clipboard() == (("text/plain", b""),)
+        pending_payload = (("text/plain", b"read before replacement\n" * 8192),)
+        desktop.write_clipboard(pending_payload)
+        assert desktop.read_clipboard() == pending_payload
+        serial = desktop.clipboard_serial()
+        peer.replace_next_read.set()
+        assert desktop.read_clipboard() == pending_payload
+        assert not peer.replace_next_read.is_set()
+        assert desktop.clipboard_serial() > serial
+        assert desktop.read_clipboard(formats=("text/plain",)) == (
+            ("text/plain", b"initial clipboard"),
+        )
         assert desktop.status().error is None
     finally:
         desktop.stop()
